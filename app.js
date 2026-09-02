@@ -119,29 +119,54 @@
       { modelId:'demo', id:2, object:{ properties:[{set:'Tekla Assembly',properties:[{name:'Cast Unit Mark',value:'K12'}]}] } },
       { modelId:'demo', id:3, object:{ properties:[{set:'Tekla Assembly',properties:[{name:'Cast Unit Mark',value:'K18'},{name:'Assembly/Cast unit weight',value:631}]},{set:'Profile',properties:[{name:'Profile',value:'HEA240'}]}] } }
     ];
-    calculateMarks();
+    calculateSelectionInfo();
   }
   async function refreshSelection() {
     if (!API) return loadDemo();
-    setStatus('Selectie inlezen…');
+    setStatus('Geselecteerde elementen en parameters inlezen…');
     try {
-      const selection = await API.viewer.getSelection();
       const rows = [];
-      for (const group of (selection || [])) {
-        const ids = group.objectRuntimeIds || [];
-        if (!ids.length) continue;
-        const objects = await API.viewer.getObjectProperties(group.modelId, ids);
-        for (const obj of (objects || [])) rows.push({ modelId: group.modelId, id: obj.id, object: obj });
+
+      // Primaire route: lees de daadwerkelijk geselecteerde objecten rechtstreeks uit.
+      // Dit staat volledig los van Cast Unit Mark / assembly-detectie.
+      try {
+        const selectedModels = await API.viewer.getObjects({ selected: true });
+        for (const group of (selectedModels || [])) {
+          for (const obj of (group.objects || [])) {
+            rows.push({ modelId: group.modelId, id: obj.id, object: obj });
+          }
+        }
+      } catch (directError) {
+        console.warn('Direct geselecteerde objecten uitlezen mislukt, fallback wordt gebruikt.', directError);
       }
+
+      // Fallback voor viewers waar getObjects({selected:true}) geen data teruggeeft.
+      if (!rows.length) {
+        const selection = await API.viewer.getSelection();
+        for (const group of (selection || [])) {
+          const ids = group.objectRuntimeIds || [];
+          if (!ids.length) continue;
+          const objects = await API.viewer.getObjectProperties(group.modelId, ids);
+          for (const obj of (objects || [])) {
+            rows.push({ modelId: group.modelId, id: obj.id, object: obj });
+          }
+        }
+      }
+
       selectionRows = rows;
-      calculateMarks();
-      setStatus(rows.length ? 'Selectie klaar.' : 'Selecteer Tekla-objecten in het model.');
+      calculateSelectionInfo();
+      setStatus(rows.length
+        ? `${rows.length} geselecteerd element${rows.length === 1 ? '' : 'en'} ingelezen.`
+        : 'Selecteer één of meer elementen in het model.');
     } catch (e) {
       console.error(e);
+      selectionRows = [];
+      calculateSelectionInfo();
       setStatus('Selectie kon niet worden ingelezen.');
     }
   }
-  function calculateMarks() {
+
+  function calculateSelectionInfo() {
     const map = new Map();
     for (const row of selectionRows) {
       const mark = findCastUnitMark(row.object);
@@ -150,14 +175,21 @@
       if (!map.has(key)) map.set(key, { mark, row });
     }
     uniqueMarks = [...map.values()];
+
+    const availableFields = getAvailableFields(false);
     $('selectedCount').textContent = selectionRows.length;
-    $('markCount').textContent = uniqueMarks.length;
-    $('selectionHint').textContent = uniqueMarks.length
-      ? `${uniqueMarks.length} unieke Tekla-merken klaar om te labelen.`
-      : 'Geen Cast Unit Mark gevonden in de selectie.';
+    $('markCount').textContent = availableFields.length;
+
+    if (!selectionRows.length) {
+      $('selectionHint').textContent = 'Selecteer één of meer elementen in de 3D Viewer.';
+    } else if (uniqueMarks.length) {
+      $('selectionHint').textContent = `${availableFields.length} parameters uit de selectie gelezen. ${uniqueMarks.length} unieke Cast Unit Mark${uniqueMarks.length === 1 ? '' : 's'} gevonden.`;
+    } else {
+      $('selectionHint').textContent = `${availableFields.length} parameters uit de selectie gelezen. Cast Unit Mark is niet vereist om parameters te bekijken of presets te bewerken.`;
+    }
   }
 
-  function getAvailableFields() {
+  function getAvailableFields(includeDefault = true) {
     const map = new Map();
     for (const row of selectionRows) {
       for (const p of flattenProperties(row.object)) {
@@ -165,9 +197,11 @@
         if (!map.has(key)) map.set(key, { set:p.set, name:p.name, label:p.name });
       }
     }
-    // Cast Unit Mark blijft altijd beschikbaar, ook wanneer de huidige selectie leeg is.
-    const castKey = 'Tekla Assembly\u0000Cast Unit Mark';
-    if (!map.has(castKey)) map.set(castKey, { set:'Tekla Assembly', name:'Cast Unit Mark', label:'Merk' });
+    // Alleen voor de preset-editor houden we Cast Unit Mark als vaste standaardoptie beschikbaar.
+    if (includeDefault) {
+      const castKey = 'Tekla Assembly\u0000Cast Unit Mark';
+      if (!map.has(castKey)) map.set(castKey, { set:'Tekla Assembly', name:'Cast Unit Mark', label:'Merk' });
+    }
     return [...map.values()].sort((a,b) => `${a.set} ${a.name}`.localeCompare(`${b.set} ${b.name}`));
   }
 
