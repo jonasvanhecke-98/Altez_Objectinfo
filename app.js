@@ -122,66 +122,117 @@
   }
   async function refreshSelection() {
     if (!API) return loadDemo();
-    setStatus('Geselecteerde elementen en parameters inlezen…');
+    setStatus('Geselecteerde elementen en parameters inlezen...');
+
     try {
       const rows = [];
-      let selection = [];
+      const seen = new Set();
 
-      // Betrouwbare route: getSelection() levert de runtime IDs van de huidige
-      // Trimble-selectie. De eigenschappen halen we daarna expliciet op via
-      // getObjectProperties(). getObjects({selected:true}) kan objectstubs
-      // teruggeven zonder de volledige properties en wordt daarom niet meer
-      // rechtstreeks als propertybron gebruikt.
+      // Primaire route: getObjects({selected:true}). Volgens de Workspace API
+      // levert dit ModelObjects[] terug waarvan objects ObjectProperties[] zijn.
+      // Als Trimble de properties al meestuurt, gebruiken we die meteen.
+      let selectedGroups = [];
       try {
-        selection = await API.viewer.getSelection() || [];
-      } catch (selectionError) {
-        console.warn('getSelection() mislukt; geselecteerde objecten worden als fallback opgezocht.', selectionError);
+        selectedGroups = await API.viewer.getObjects({ selected: true }) || [];
+      } catch (e) {
+        console.warn('getObjects({selected:true}) mislukt', e);
       }
 
-      // Fallback: haal alleen de IDs uit getObjects({selected:true}).
-      if (!selection.length) {
-        try {
-          const selectedModels = await API.viewer.getObjects({ selected: true }) || [];
-          selection = selectedModels.map(group => ({
-            modelId: group.modelId,
-            objectRuntimeIds: (group.objects || []).map(obj => obj.id).filter(id => Number.isFinite(id))
-          })).filter(group => group.objectRuntimeIds.length);
-        } catch (objectsError) {
-          console.warn('Fallback getObjects({selected:true}) mislukt.', objectsError);
+      for (const group of selectedGroups) {
+        const modelId = group?.modelId;
+        const objects = Array.isArray(group?.objects) ? group.objects : [];
+        if (!modelId) continue;
+
+        const missingIds = [];
+        for (const obj of objects) {
+          const id = Number(obj?.id);
+          if (!Number.isFinite(id)) continue;
+          const key = `${modelId}:${id}`;
+          if (seen.has(key)) continue;
+
+          if (Array.isArray(obj.properties) && obj.properties.length) {
+            seen.add(key);
+            rows.push({ modelId, id, object: obj });
+          } else {
+            missingIds.push(id);
+          }
+        }
+
+        if (missingIds.length) {
+          try {
+            const full = await API.viewer.getObjectProperties(modelId, missingIds) || [];
+            for (const obj of full) {
+              const id = Number(obj?.id);
+              if (!Number.isFinite(id)) continue;
+              const key = `${modelId}:${id}`;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              rows.push({ modelId, id, object: obj });
+            }
+          } catch (e) {
+            console.warn('getObjectProperties fallback mislukt', modelId, missingIds, e);
+          }
         }
       }
 
-      // Properties altijd expliciet ophalen per model.
-      for (const group of selection) {
-        const ids = Array.from(new Set(group.objectRuntimeIds || [])).filter(id => Number.isFinite(id));
-        if (!group.modelId || !ids.length) continue;
-
+      // Tweede route: getSelection() + getObjectProperties(). Dit vangt hosts op
+      // waar getObjects({selected:true}) geen objecten of alleen stubs teruggeeft.
+      if (!rows.length) {
+        let selection = [];
         try {
-          const objects = await API.viewer.getObjectProperties(group.modelId, ids) || [];
-          for (const obj of objects) {
-            rows.push({ modelId: group.modelId, id: obj.id, object: obj });
+          selection = await API.viewer.getSelection() || [];
+        } catch (e) {
+          console.warn('getSelection() mislukt', e);
+        }
+
+        for (const group of selection) {
+          const modelId = group?.modelId;
+          const ids = (group?.objectRuntimeIds || [])
+            .map(Number)
+            .filter(Number.isFinite);
+          if (!modelId || !ids.length) continue;
+
+          try {
+            const full = await API.viewer.getObjectProperties(modelId, ids) || [];
+            for (const obj of full) {
+              const id = Number(obj?.id);
+              if (!Number.isFinite(id)) continue;
+              const key = `${modelId}:${id}`;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              rows.push({ modelId, id, object: obj });
+            }
+          } catch (e) {
+            console.warn('getObjectProperties via getSelection mislukt', modelId, ids, e);
           }
-        } catch (propertyError) {
-          console.error(`Properties uitlezen mislukt voor model ${group.modelId}`, propertyError);
         }
       }
 
       selectionRows = rows;
       calculateSelectionInfo();
 
-      if (!selection.length) {
-        setStatus('Selecteer één of meer elementen in het model.');
-      } else if (!rows.length) {
-        setStatus('De selectie is gevonden, maar Trimble gaf geen objecteigenschappen terug.');
+      const parameterCount = getAvailableFields(false).length;
+      const withProperties = rows.filter(r => flattenProperties(r.object).length > 0).length;
+
+      console.log('Altez Objectinfo selectie', {
+        selectedGroups,
+        rows,
+        parameterCount,
+        withProperties
+      });
+
+      if (!rows.length) {
+        setStatus('Geen geselecteerde 3D-objecten gevonden. Selecteer opnieuw en klik op Opnieuw inlezen.');
+      } else if (!withProperties) {
+        setStatus(`${rows.length} element(en) gevonden, maar Trimble gaf geen parameters terug.`);
       } else {
-        const parameterCount = getAvailableFields(false).length;
-        setStatus(`${rows.length} geselecteerd element${rows.length === 1 ? '' : 'en'} ingelezen · ${parameterCount} parameters gevonden.`);
+        setStatus(`${rows.length} element(en) ingelezen - ${parameterCount} unieke parameters gevonden.`);
       }
     } catch (e) {
-      console.error(e);
+      console.error('Selectie inlezen mislukt', e);
       selectionRows = [];
       calculateSelectionInfo();
-      setStatus('Selectie kon niet worden ingelezen.');
+      setStatus(`Selectie kon niet worden ingelezen: ${e?.message || e}`);
     }
   }
 
@@ -366,12 +417,16 @@
         let box = null;
         try {
           const boxes = await API.viewer.getObjectBoundingBoxes(row.modelId, [row.id]);
-          box = boxes?.[0] || null;
+          box = (boxes || []).find(b => Number(b?.id) === Number(row.id)) || boxes?.[0] || null;
         } catch (bboxError) {
           console.warn('Bounding box kon niet worden gelezen voor object', row.id, bboxError);
         }
 
         const center = bboxCenter(box, row.object.position);
+        if (!center) {
+          console.warn('Geen positie beschikbaar voor label', row);
+          continue;
+        }
         const offset = labelOffset(center, i);
 
         markups.push({
@@ -408,15 +463,26 @@
   }
 
   function bboxCenter(box, fallback) {
-    const min = box?.min || box?.box?.min || box?.minimum;
-    const max = box?.max || box?.box?.max || box?.maximum;
-    if (min && max) return { x:(min.x+max.x)/2, y:(min.y+max.y)/2, z:(min.z+max.z)/2 };
-    if (fallback) return { x:Number(fallback.x)||0, y:Number(fallback.y)||0, z:Number(fallback.z)||0 };
-    return {x:0,y:0,z:0};
+    // getObjectBoundingBoxes() retourneert ObjectBoundingBox met .boundingBox.min/max.
+    // De viewer gebruikt meters voor objectposities; markup picks verwachten mm.
+    const bb = box?.boundingBox || box?.box || box;
+    const min = bb?.min || bb?.minimum;
+    const max = bb?.max || bb?.maximum;
+    if (min && max) {
+      return {
+        x: (Number(min.x) + Number(max.x)) / 2,
+        y: (Number(min.y) + Number(max.y)) / 2,
+        z: (Number(min.z) + Number(max.z)) / 2
+      };
+    }
+    if (fallback) {
+      return { x:Number(fallback.x)||0, y:Number(fallback.y)||0, z:Number(fallback.z)||0 };
+    }
+    return null;
   }
   function labelOffset(c, index) {
-    const stagger = (index % 5) * .12;
-    return { x:c.x + 1.0 + stagger, y:c.y + .35 + stagger, z:c.z + .55 + stagger };
+    const stagger = (index % 6) * 0.10;
+    return { x:c.x + 1.2 + stagger, y:c.y + 0.35 + stagger, z:c.z + 0.65 + stagger };
   }
   async function clearLabels(updateStatus=true) {
     if (API && activeMarkupIds.length) {
