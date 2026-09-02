@@ -18,3 +18,7 @@ Plaats de bestanden in de root van repository `Altez_Objectinfo` en activeer Git
 
 Manifest URL:
 `https://jonasvanhecke-98.github.io/Altez_Objectinfo/manifest.json`
+
+
+## v4
+Selectie-uitlezing gebruikt nu altijd `viewer.getSelection()` + `viewer.getObjectProperties()` zodat de volledige properties van geselecteerde elementen worden opgehaald.

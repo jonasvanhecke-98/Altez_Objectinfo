@@ -126,38 +126,58 @@
     setStatus('Geselecteerde elementen en parameters inlezen…');
     try {
       const rows = [];
+      let selection = [];
 
-      // Primaire route: lees de daadwerkelijk geselecteerde objecten rechtstreeks uit.
-      // Dit staat volledig los van Cast Unit Mark / assembly-detectie.
+      // Betrouwbare route: getSelection() levert de runtime IDs van de huidige
+      // Trimble-selectie. De eigenschappen halen we daarna expliciet op via
+      // getObjectProperties(). getObjects({selected:true}) kan objectstubs
+      // teruggeven zonder de volledige properties en wordt daarom niet meer
+      // rechtstreeks als propertybron gebruikt.
       try {
-        const selectedModels = await API.viewer.getObjects({ selected: true });
-        for (const group of (selectedModels || [])) {
-          for (const obj of (group.objects || [])) {
-            rows.push({ modelId: group.modelId, id: obj.id, object: obj });
-          }
-        }
-      } catch (directError) {
-        console.warn('Direct geselecteerde objecten uitlezen mislukt, fallback wordt gebruikt.', directError);
+        selection = await API.viewer.getSelection() || [];
+      } catch (selectionError) {
+        console.warn('getSelection() mislukt; geselecteerde objecten worden als fallback opgezocht.', selectionError);
       }
 
-      // Fallback voor viewers waar getObjects({selected:true}) geen data teruggeeft.
-      if (!rows.length) {
-        const selection = await API.viewer.getSelection();
-        for (const group of (selection || [])) {
-          const ids = group.objectRuntimeIds || [];
-          if (!ids.length) continue;
-          const objects = await API.viewer.getObjectProperties(group.modelId, ids);
-          for (const obj of (objects || [])) {
+      // Fallback: haal alleen de IDs uit getObjects({selected:true}).
+      if (!selection.length) {
+        try {
+          const selectedModels = await API.viewer.getObjects({ selected: true }) || [];
+          selection = selectedModels.map(group => ({
+            modelId: group.modelId,
+            objectRuntimeIds: (group.objects || []).map(obj => obj.id).filter(id => Number.isFinite(id))
+          })).filter(group => group.objectRuntimeIds.length);
+        } catch (objectsError) {
+          console.warn('Fallback getObjects({selected:true}) mislukt.', objectsError);
+        }
+      }
+
+      // Properties altijd expliciet ophalen per model.
+      for (const group of selection) {
+        const ids = Array.from(new Set(group.objectRuntimeIds || [])).filter(id => Number.isFinite(id));
+        if (!group.modelId || !ids.length) continue;
+
+        try {
+          const objects = await API.viewer.getObjectProperties(group.modelId, ids) || [];
+          for (const obj of objects) {
             rows.push({ modelId: group.modelId, id: obj.id, object: obj });
           }
+        } catch (propertyError) {
+          console.error(`Properties uitlezen mislukt voor model ${group.modelId}`, propertyError);
         }
       }
 
       selectionRows = rows;
       calculateSelectionInfo();
-      setStatus(rows.length
-        ? `${rows.length} geselecteerd element${rows.length === 1 ? '' : 'en'} ingelezen.`
-        : 'Selecteer één of meer elementen in het model.');
+
+      if (!selection.length) {
+        setStatus('Selecteer één of meer elementen in het model.');
+      } else if (!rows.length) {
+        setStatus('De selectie is gevonden, maar Trimble gaf geen objecteigenschappen terug.');
+      } else {
+        const parameterCount = getAvailableFields(false).length;
+        setStatus(`${rows.length} geselecteerd element${rows.length === 1 ? '' : 'en'} ingelezen · ${parameterCount} parameters gevonden.`);
+      }
     } catch (e) {
       console.error(e);
       selectionRows = [];
@@ -182,10 +202,8 @@
 
     if (!selectionRows.length) {
       $('selectionHint').textContent = 'Selecteer één of meer elementen in de 3D Viewer.';
-    } else if (uniqueMarks.length) {
-      $('selectionHint').textContent = `${availableFields.length} parameters uit de selectie gelezen. ${uniqueMarks.length} unieke Cast Unit Mark${uniqueMarks.length === 1 ? '' : 's'} gevonden.`;
     } else {
-      $('selectionHint').textContent = `${availableFields.length} parameters uit de selectie gelezen. Cast Unit Mark is niet vereist om parameters te bekijken of presets te bewerken.`;
+      $('selectionHint').textContent = `${availableFields.length} parameters uit de geselecteerde elementen gelezen.`;
     }
   }
 
