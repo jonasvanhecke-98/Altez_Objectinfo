@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Altez Objectinfo</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
+</head>
+<body>
+  <main class="app">
+    <header class="header">
+      <div>
+        <div class="eyebrow">ALTEZ</div>
+        <h1>Objectinfo</h1>
+      </div>
+      <span id="connectionBadge" class="badge">Verbinden…</span>
+    </header>
+
+    <section class="card">
+      <div class="section-title-row">
+        <h2>Selectie</h2>
+        <button id="refreshSelection" class="icon-btn" title="Selectie opnieuw inlezen">↻</button>
+      </div>
+      <div class="stats">
+        <div><strong id="selectedCount">0</strong><span>objecten geselecteerd</span></div>
+        <div><strong id="markCount">0</strong><span>unieke merken gevonden</span></div>
+      </div>
+      <p id="selectionHint" class="muted">Selecteer één of meer Tekla-objecten in de 3D Viewer.</p>
+    </section>
+
+    <section class="card">
+      <div class="section-title-row">
+        <h2>Preset</h2>
+        <button id="newPreset" class="text-btn">+ Nieuwe preset</button>
+      </div>
+      <select id="presetSelect" class="select"></select>
+      <div id="presetFields" class="field-list"></div>
+      <div class="preset-actions">
+        <button id="editPreset" class="secondary">Preset aanpassen</button>
+        <button id="deletePreset" class="danger ghost">Verwijderen</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Weergave</h2>
+      <label class="control-row">
+        <span>Labelkleur</span>
+        <input id="labelColor" type="color" value="#d62828" />
+      </label>
+      <label class="check-row">
+        <input id="hideEmpty" type="checkbox" checked />
+        <span>Lege velden verbergen</span>
+      </label>
+      <button id="placeLabels" class="primary">Merklabels plaatsen</button>
+      <button id="clearLabels" class="secondary full">Alle labels verwijderen</button>
+      <p id="status" class="status">Nog geen labels geplaatst.</p>
+    </section>
+  </main>
+
+  <dialog id="presetDialog">
+    <form method="dialog" id="presetForm">
+      <div class="dialog-head">
+        <h3 id="dialogTitle">Nieuwe preset</h3>
+        <button value="cancel" class="icon-btn" aria-label="Sluiten">×</button>
+      </div>
+      <label class="stack">
+        <span>Naam</span>
+        <input id="presetName" required maxlength="40" />
+      </label>
+      <p class="muted small">Velden uit de huidige selectie</p>
+      <div id="availableFields" class="available-fields"></div>
+      <div class="dialog-actions">
+        <button value="cancel" class="secondary">Annuleren</button>
+        <button id="savePreset" value="default" class="primary">Opslaan</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

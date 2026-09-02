@@ -1,0 +1,8 @@
+{
+  "title": "Altez Objectinfo",
+  "url": "https://jonasvanhecke-98.github.io/Altez_Objectinfo/",
+  "icon": "https://jonasvanhecke-98.github.io/Altez_Objectinfo/icon.svg",
+  "description": "Toont informatie als labels voor unieke Tekla-merken in de Trimble Connect 3D Viewer. Standaardpreset Merk gebruikt Tekla Assembly - Cast Unit Mark.",
+  "enabled": true,
+  "extensionType": ["3dviewer"]
+}
