@@ -22,3 +22,9 @@ Manifest URL:
 
 ## v4
 Selectie-uitlezing gebruikt nu altijd `viewer.getSelection()` + `viewer.getObjectProperties()` zodat de volledige properties van geselecteerde elementen worden opgehaald.
+
+
+## v5
+- Eén label per geselecteerde Trimble runtime-ID; nooit groeperen op Cast Unit Mark of andere parameterwaarden.
+- Meerdere parameters per preset worden samen in hetzelfde label getoond.
+- Cast Unit Mark is alleen een labelveld, geen unieke sleutel.

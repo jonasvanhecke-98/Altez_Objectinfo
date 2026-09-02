@@ -23,7 +23,6 @@
 
   let API = null;
   let selectionRows = [];
-  let uniqueMarks = [];
   let activeMarkupIds = [];
   let editingPresetId = null;
   let dialogFields = [];
@@ -187,15 +186,6 @@
   }
 
   function calculateSelectionInfo() {
-    const map = new Map();
-    for (const row of selectionRows) {
-      const mark = findCastUnitMark(row.object);
-      if (!mark) continue;
-      const key = normalize(mark);
-      if (!map.has(key)) map.set(key, { mark, row });
-    }
-    uniqueMarks = [...map.values()];
-
     const availableFields = getAvailableFields(false);
     $('selectedCount').textContent = selectionRows.length;
     $('markCount').textContent = availableFields.length;
@@ -330,41 +320,90 @@
   }
 
   async function placeLabels() {
-    if (!uniqueMarks.length) return setStatus('Geen merken met Cast Unit Mark gevonden.');
+    if (!selectionRows.length) return setStatus('Selecteer eerst één of meer elementen in de 3D Viewer.');
+
     const preset = selectedPreset();
+    if (!preset.fields?.length) return setStatus('De gekozen preset bevat geen parameters.');
+
     const hideEmpty = $('hideEmpty').checked;
     const color = colorToRGBA(selectedColor);
-    if (!API) return setStatus(`Preview: ${uniqueMarks.length} merklabel(s) met preset “${preset.name}”.`);
+
+    // Belangrijk: nooit groeperen op Cast Unit Mark of op een andere parameterwaarde.
+    // Elke geselecteerde Trimble runtime-ID is een afzonderlijk labeldoel. Daardoor
+    // krijgen twee verschillende assemblies met dezelfde Cast Unit Mark elk hun eigen label.
+    const labelTargets = selectionRows.slice();
+
+    if (!API) {
+      return setStatus(`Preview: ${labelTargets.length} afzonderlijke label(s) met preset “${preset.name}”.`);
+    }
+
     try {
       await clearLabels(false);
       const markups = [];
-      for (let i=0;i<uniqueMarks.length;i++) {
-        const { mark, row } = uniqueMarks[i];
-        const boxes = await API.viewer.getObjectBoundingBoxes(row.modelId, [row.id]);
-        const box = boxes?.[0];
-        const center = bboxCenter(box, row.object.position);
+
+      for (let i = 0; i < labelTargets.length; i++) {
+        const row = labelTargets[i];
         const lines = [];
+
+        // Alle parameters uit de preset worden in hetzelfde label gezet, in de
+        // ingestelde volgorde. De parameterwaarden bepalen nooit de uniciteit.
         for (const field of preset.fields) {
-          let value = normalize(field.set)==='tekla assembly' && normalize(field.name)==='cast unit mark' ? mark : fieldValue(row.object, field);
-          if (hideEmpty && !String(value).trim()) continue;
-          const onlyMark = preset.fields.length === 1 && normalize(field.name)==='cast unit mark';
-          lines.push(onlyMark ? (value || '-') : `${field.label || field.name}: ${value || '-'}`);
+          const value = fieldValue(row.object, field);
+          const hasValue = String(value ?? '').trim() !== '';
+          if (hideEmpty && !hasValue) continue;
+
+          // Bij een preset met slechts één veld tonen we alleen de waarde. Bij
+          // meerdere velden tonen we ook de ingestelde veldnaam voor leesbaarheid.
+          if (preset.fields.length === 1) {
+            lines.push(hasValue ? String(value) : '-');
+          } else {
+            lines.push(`${field.label || field.name}: ${hasValue ? value : '-'}`);
+          }
         }
+
         if (!lines.length) continue;
+
+        let box = null;
+        try {
+          const boxes = await API.viewer.getObjectBoundingBoxes(row.modelId, [row.id]);
+          box = boxes?.[0] || null;
+        } catch (bboxError) {
+          console.warn('Bounding box kon niet worden gelezen voor object', row.id, bboxError);
+        }
+
+        const center = bboxCenter(box, row.object.position);
         const offset = labelOffset(center, i);
+
         markups.push({
-          start: { modelId: row.modelId, objectId: row.id, positionX:center.x*1000, positionY:center.y*1000, positionZ:center.z*1000, type:'point' },
-          end: { positionX:offset.x*1000, positionY:offset.y*1000, positionZ:offset.z*1000, type:'point' },
+          start: {
+            modelId: row.modelId,
+            objectId: row.id,
+            positionX: center.x * 1000,
+            positionY: center.y * 1000,
+            positionZ: center.z * 1000,
+            type: 'point'
+          },
+          end: {
+            positionX: offset.x * 1000,
+            positionY: offset.y * 1000,
+            positionZ: offset.z * 1000,
+            type: 'point'
+          },
           text: lines.join('\n'),
           color
         });
       }
+
+      if (!markups.length) {
+        return setStatus('Geen labels geplaatst: de gekozen parameters bevatten geen waarden in de selectie.');
+      }
+
       const added = await API.markup.addTextMarkup(markups);
       activeMarkupIds = (added || []).map(m => m.id).filter(id => id !== undefined && id !== null);
-      setStatus(`${activeMarkupIds.length || markups.length} merklabel(s) geplaatst.`);
+      setStatus(`${markups.length} afzonderlijke label(s) geplaatst.`);
     } catch (e) {
       console.error(e);
-      setStatus('Labels plaatsen is mislukt. Controleer de geselecteerde Tekla-merken.');
+      setStatus('Labels plaatsen is mislukt. Open de browserconsole voor de technische foutmelding.');
     }
   }
 
