@@ -2,12 +2,12 @@
   'use strict';
 
   /* =========================================================
-     ALTEZ OBJECTINFO
+     ALTEZ OBJECTINFO - V6
      ========================================================= */
 
-  const STORAGE_KEY = 'altez-objectinfo-presets-v5';
-  const DEFAULT_KEY = 'altez-objectinfo-default-v5';
-  const COLOR_KEY = 'altez-objectinfo-color-v5';
+  const STORAGE_KEY = 'altez-objectinfo-presets-v6';
+  const DEFAULT_KEY = 'altez-objectinfo-default-v6';
+  const COLOR_KEY = 'altez-objectinfo-color-v6';
 
   const TRIMBLE_COLORS = [
     '#f44336','#ff7043','#ff9800','#ffc107','#ffeb3b','#cddc39','#8bc34a',
@@ -29,8 +29,7 @@
   let selectedColor =
     localStorage.getItem(COLOR_KEY) || '#f44336';
 
-  const $ = id =>
-    document.getElementById(id);
+  const $ = id => document.getElementById(id);
 
 
   /* =========================================================
@@ -53,26 +52,6 @@
       .replace(/[^a-z0-9]/g, '');
   }
 
-  function safeValue(value) {
-    if (value === null || value === undefined) {
-      return '';
-    }
-
-    if (typeof value === 'bigint') {
-      return value.toString();
-    }
-
-    if (typeof value === 'object') {
-      try {
-        return JSON.stringify(value);
-      } catch {
-        return String(value);
-      }
-    }
-
-    return String(value);
-  }
-
   function escapeHtml(value) {
     return String(value ?? '').replace(
       /[&<>"']/g,
@@ -87,7 +66,68 @@
   }
 
   function setStatus(text) {
-    $('status').textContent = text;
+    const element = $('status');
+
+    if (element) {
+      element.textContent = text;
+    }
+  }
+
+
+  /* =========================================================
+     WAARDE OMZETTEN NAAR TEKST
+     ========================================================= */
+
+  function safeValue(value) {
+
+    if (
+      value === null ||
+      value === undefined
+    ) {
+      return '';
+    }
+
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+
+    if (typeof value === 'object') {
+
+      /*
+       * Sommige propertywaarden kunnen zelf
+       * value + unit bevatten.
+       */
+
+      if (
+        Object.prototype.hasOwnProperty.call(
+          value,
+          'value'
+        )
+      ) {
+
+        const raw =
+          value.value;
+
+        const unit =
+          value.unit ||
+          value.units ||
+          '';
+
+        if (unit) {
+          return `${raw ?? ''} ${unit}`.trim();
+        }
+
+        return String(raw ?? '');
+      }
+
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return String(value);
+      }
+    }
+
+    return String(value);
   }
 
 
@@ -95,19 +135,19 @@
      RAW TRIMBLE PROPERTIES
      =========================================================
 
-     Hier wordt NIETS toegevoegd.
+     BELANGRIJK:
 
-     We nemen uitsluitend:
+     Hier voegen we GEEN parameters toe.
+
+     Alles komt rechtstreeks uit:
 
      ObjectProperties.properties
-        -> PropertySet.set
-        -> PropertySet.properties
-        -> Property.name
-        -> Property.value
-
+       -> PropertySet
+       -> Property
      ========================================================= */
 
   function flattenProperties(object) {
+
     const result = [];
 
     if (!object) {
@@ -126,7 +166,9 @@
       }
 
       const setName =
-        String(propertySet.set ?? '').trim();
+        String(
+          propertySet.set ?? ''
+        ).trim();
 
       const properties =
         Array.isArray(propertySet.properties)
@@ -140,17 +182,49 @@
         }
 
         const propertyName =
-          String(property.name ?? '').trim();
+          String(
+            property.name ?? ''
+          ).trim();
 
         if (!propertyName) {
           continue;
+        }
+
+        /*
+         * Unit kan afhankelijk van de bron
+         * op verschillende manieren aanwezig zijn.
+         */
+
+        let unit =
+          property.unit ??
+          property.units ??
+          property.unitSymbol ??
+          property.symbol ??
+          '';
+
+        /*
+         * Indien value zelf een object is.
+         */
+
+        if (
+          !unit &&
+          property.value &&
+          typeof property.value === 'object'
+        ) {
+
+          unit =
+            property.value.unit ??
+            property.value.units ??
+            property.value.unitSymbol ??
+            '';
         }
 
         result.push({
           set: setName,
           name: propertyName,
           type: property.type,
-          value: property.value
+          value: property.value,
+          unit: String(unit || '').trim()
         });
       }
     }
@@ -164,6 +238,7 @@
      ========================================================= */
 
   function fieldKey(field) {
+
     return JSON.stringify([
       field?.set || '',
       field?.name || ''
@@ -172,16 +247,20 @@
 
 
   /* =========================================================
-     ALLE ECHT BESCHIKBARE PARAMETERS
+     ALLE ECHTE BESCHIKBARE PARAMETERS
      ========================================================= */
 
   function getAvailableFields() {
-    const map = new Map();
+
+    const map =
+      new Map();
 
     for (const row of selectionRows) {
 
       const properties =
-        flattenProperties(row.object);
+        flattenProperties(
+          row.object
+        );
 
       for (const property of properties) {
 
@@ -190,16 +269,20 @@
 
         if (!map.has(key)) {
 
-          map.set(key, {
-            set: property.set,
-            name: property.name,
-            label: property.name
-          });
+          map.set(
+            key,
+            {
+              set: property.set,
+              name: property.name,
+              label: property.name
+            }
+          );
         }
       }
     }
 
-    return Array.from(map.values())
+    return Array
+      .from(map.values())
       .sort((a, b) => {
 
         const setA =
@@ -208,7 +291,7 @@
         const setB =
           b.set || '';
 
-        const compareSet =
+        const setCompare =
           setA.localeCompare(
             setB,
             undefined,
@@ -218,8 +301,8 @@
             }
           );
 
-        if (compareSet !== 0) {
-          return compareSet;
+        if (setCompare !== 0) {
+          return setCompare;
         }
 
         return a.name.localeCompare(
@@ -236,19 +319,24 @@
 
   /* =========================================================
      CAST UNIT MARK HERKENNEN
+     =========================================================
 
-     Alleen gebruikt om standaardpreset "Merk"
-     automatisch te kiezen.
+     Alleen voor automatische preset "Merk".
 
-     Er wordt GEEN parameter toegevoegd.
+     Er wordt GEEN Cast Unit Mark parameter
+     kunstmatig aangemaakt.
      ========================================================= */
 
   function findCastUnitMarkField() {
+
     const fields =
       getAvailableFields();
 
-    let best = null;
-    let bestScore = 0;
+    let best =
+      null;
+
+    let bestScore =
+      0;
 
     for (const field of fields) {
 
@@ -260,7 +348,8 @@
           `${field.set} ${field.name}`
         );
 
-      let score = 0;
+      let score =
+        0;
 
       if (
         name ===
@@ -292,9 +381,16 @@
         score = 85;
       }
 
-      if (score > bestScore) {
-        best = field;
-        bestScore = score;
+      if (
+        score >
+        bestScore
+      ) {
+
+        best =
+          field;
+
+        bestScore =
+          score;
       }
     }
 
@@ -303,29 +399,238 @@
 
 
   /* =========================================================
-     WAARDE VAN PARAMETER
+     EENHEDEN
      ========================================================= */
 
-  function fieldValue(object, field) {
+  function normalizeUnit(unit) {
 
-    const properties =
-      flattenProperties(object);
+    let text =
+      String(unit || '')
+        .trim();
+
+    if (!text) {
+      return '';
+    }
 
     /*
-       Eerst 100% exacte match.
-    */
+     * Nettere schrijfwijze.
+     */
+
+    text = text
+      .replace(/\bm2\b/gi, 'm²')
+      .replace(/\bm\^2\b/gi, 'm²')
+      .replace(/\bm3\b/gi, 'm³')
+      .replace(/\bm\^3\b/gi, 'm³')
+      .replace(/\bmm2\b/gi, 'mm²')
+      .replace(/\bmm\^2\b/gi, 'mm²')
+      .replace(/\bmm3\b/gi, 'mm³')
+      .replace(/\bmm\^3\b/gi, 'mm³');
+
+    return text;
+  }
+
+
+  function valueAlreadyHasUnit(value) {
+
+    const text =
+      String(value || '')
+        .trim();
+
+    return (
+      /\bmm\b$/i.test(text) ||
+      /\bcm\b$/i.test(text) ||
+      /\bdm\b$/i.test(text) ||
+      /\bm\b$/i.test(text) ||
+
+      /mm²$/i.test(text) ||
+      /cm²$/i.test(text) ||
+      /m²$/i.test(text) ||
+
+      /mm2$/i.test(text) ||
+      /cm2$/i.test(text) ||
+      /m2$/i.test(text) ||
+
+      /mm³$/i.test(text) ||
+      /cm³$/i.test(text) ||
+      /m³$/i.test(text) ||
+
+      /mm3$/i.test(text) ||
+      /cm3$/i.test(text) ||
+      /m3$/i.test(text) ||
+
+      /\bkg\b$/i.test(text) ||
+      /\bton\b$/i.test(text) ||
+      /\btonne\b$/i.test(text) ||
+      /\bt\b$/i.test(text) ||
+
+      /\bpa\b$/i.test(text) ||
+      /\bkpa\b$/i.test(text) ||
+      /\bmpa\b$/i.test(text) ||
+
+      /\bkn\b$/i.test(text) ||
+      /\bn\b$/i.test(text) ||
+
+      /%$/.test(text)
+    );
+  }
+
+
+  function detectUnit(property) {
+
+    /*
+     * =============================================
+     * 1. EENHEID VAN TRIMBLE / MODEL
+     * =============================================
+     */
+
+    if (property?.unit) {
+
+      return normalizeUnit(
+        property.unit
+      );
+    }
+
+
+    /*
+     * =============================================
+     * 2. WAARDE ZELF BEVAT EENHEID
+     * =============================================
+     */
+
+    const rawValue =
+      safeValue(
+        property?.value
+      );
+
+    if (
+      valueAlreadyHasUnit(
+        rawValue
+      )
+    ) {
+
+      /*
+       * Geen extra unit toevoegen.
+       */
+
+      return '';
+    }
+
+
+    /*
+     * =============================================
+     * 3. PARAMETERNAAM HERKENNEN
+     * =============================================
+     */
+
+    const name =
+      normalize(
+        property?.name
+      );
+
+    const compactName =
+      compact(
+        property?.name
+      );
+
+
+    /*
+     * OPPERVLAKTE
+     */
+
+    if (
+      name.includes('area') ||
+      name.includes('oppervlakte') ||
+      name.includes('surface area') ||
+      compactName.includes('netarea') ||
+      compactName.includes('grossarea')
+    ) {
+
+      return 'm²';
+    }
+
+
+    /*
+     * VOLUME / INHOUD
+     */
+
+    if (
+      name.includes('volume') ||
+      name.includes('inhoud') ||
+      compactName.includes('netvolume') ||
+      compactName.includes('grossvolume')
+    ) {
+
+      return 'm³';
+    }
+
+
+    /*
+     * LENGTE
+
+     * Alleen duidelijke lengtematen.
+     */
+
+    if (
+      name === 'length' ||
+      name === 'lengte' ||
+      name.includes('total length') ||
+      name.includes('totale lengte')
+    ) {
+
+      return 'm';
+    }
+
+
+    /*
+     * GEWICHT / MASSA
+
+     * Hier gaan we NIET automatisch kg gokken
+     * wanneer de bron niets zegt.
+
+     * Tekla Assembly/Cast unit weight kan
+     * bijvoorbeeld afhankelijk van de bron
+     * anders worden aangeleverd.
+     */
+
+    return '';
+  }
+
+
+  /* =========================================================
+     PROPERTY OPZOEKEN
+     ========================================================= */
+
+  function findProperty(
+    object,
+    field
+  ) {
+
+    const properties =
+      flattenProperties(
+        object
+      );
+
+
+    /*
+     * 1. Exact.
+     */
 
     let property =
       properties.find(item =>
 
-        item.set === field.set
+        item.set ===
+          field.set
+
         &&
-        item.name === field.name
+
+        item.name ===
+          field.name
       );
 
+
     /*
-       Daarna case-insensitive exacte match.
-    */
+     * 2. Case insensitive.
+     */
 
     if (!property) {
 
@@ -342,15 +647,17 @@
         );
     }
 
+
     /*
-       Alleen voor Cast Unit Mark:
-       naamfallback.
-    */
+     * 3. Cast Unit Mark fallback.
+     */
 
     if (
       !property &&
       compact(field.name)
-        .includes('castunitmark')
+        .includes(
+          'castunitmark'
+        )
     ) {
 
       property =
@@ -363,29 +670,107 @@
         );
     }
 
-    return property
-      ? safeValue(property.value)
-      : '';
+
+    return property ||
+      null;
   }
 
 
   /* =========================================================
-     PRESETS OPSLAAN
+     PROPERTYWAARDE MET EENHEID
+     ========================================================= */
+
+  function fieldValue(
+    object,
+    field
+  ) {
+
+    const property =
+      findProperty(
+        object,
+        field
+      );
+
+    if (!property) {
+      return '';
+    }
+
+
+    let value =
+      safeValue(
+        property.value
+      ).trim();
+
+
+    if (!value) {
+      return '';
+    }
+
+
+    /*
+     * Heeft waarde zelf al een unit?
+     */
+
+    if (
+      valueAlreadyHasUnit(
+        value
+      )
+    ) {
+
+      return value;
+    }
+
+
+    /*
+     * Anders unit bepalen.
+     */
+
+    const unit =
+      detectUnit(
+        property
+      );
+
+
+    if (unit) {
+
+      return `${value} ${unit}`;
+    }
+
+
+    return value;
+  }
+
+
+  /* =========================================================
+     PRESETS
      ========================================================= */
 
   function getCustomPresets() {
+
     try {
-      return JSON.parse(
-        localStorage.getItem(
-          STORAGE_KEY
-        ) || '[]'
-      );
+
+      const value =
+        JSON.parse(
+          localStorage.getItem(
+            STORAGE_KEY
+          ) || '[]'
+        );
+
+      return Array.isArray(value)
+        ? value
+        : [];
+
     } catch {
+
       return [];
     }
   }
 
-  function saveCustomPresets(presets) {
+
+  function saveCustomPresets(
+    presets
+  ) {
+
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify(presets)
@@ -394,14 +779,14 @@
 
 
   /* =========================================================
-     STANDAARDPRESET MERK
+     STANDAARD PRESET MERK
      ========================================================= */
 
   function getDefaultPreset() {
 
     /*
-       Eerst opgeslagen versie proberen.
-    */
+     * Eerst opgeslagen Merk-preset.
+     */
 
     try {
 
@@ -412,14 +797,18 @@
           ) || 'null'
         );
 
+
       if (
         saved &&
-        Array.isArray(saved.fields) &&
+        Array.isArray(
+          saved.fields
+        ) &&
         saved.fields.length
       ) {
 
         const available =
           getAvailableFields();
+
 
         const validFields =
           saved.fields
@@ -437,12 +826,22 @@
                     savedField.name
                 );
 
+
               if (!match) {
                 return null;
               }
 
+
               return {
                 ...match,
+
+                /*
+                 * BELANGRIJK:
+                 *
+                 * Zelfgekozen "Naam in label"
+                 * behouden.
+                 */
+
                 label:
                   savedField.label ||
                   match.name
@@ -450,7 +849,10 @@
             })
             .filter(Boolean);
 
-        if (validFields.length) {
+
+        if (
+          validFields.length
+        ) {
 
           return {
             id: 'builtin-mark',
@@ -465,13 +867,14 @@
 
 
     /*
-       Geen geldige opgeslagen preset.
+     * Geen opgeslagen preset.
+     *
+     * Zoek echte Cast Unit Mark.
+     */
 
-       Zoek echte Cast Unit Mark.
-    */
-
-    const castUnitMark =
+    const mark =
       findCastUnitMarkField();
+
 
     return {
       id: 'builtin-mark',
@@ -479,26 +882,28 @@
       builtin: true,
 
       fields:
-        castUnitMark
-
+        mark
           ? [
               {
-                ...castUnitMark,
+                ...mark,
                 label: 'Merk'
               }
             ]
-
           : []
     };
   }
 
-  function saveDefaultPreset(preset) {
+
+  function saveDefaultPreset(
+    preset
+  ) {
 
     localStorage.setItem(
       DEFAULT_KEY,
 
       JSON.stringify({
-        fields: preset.fields
+        fields:
+          preset.fields
       })
     );
   }
@@ -518,6 +923,7 @@
     const id =
       $('presetSelect').value;
 
+
     return (
       allPresets()
         .find(
@@ -533,27 +939,38 @@
 
 
   /* =========================================================
-     PRESETS WEERGEVEN
+     PRESETS TONEN
      ========================================================= */
 
-  function renderPresets(preferId) {
+  function renderPresets(
+    preferId
+  ) {
 
     const select =
       $('presetSelect');
 
+
+    if (!select) {
+      return;
+    }
+
+
     const presets =
       allPresets();
+
 
     const current =
       preferId ||
       select.value ||
       'builtin-mark';
 
+
     select.innerHTML =
       presets.map(
         preset =>
           `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)}</option>`
       ).join('');
+
 
     if (
       presets.some(
@@ -571,6 +988,7 @@
         'builtin-mark';
     }
 
+
     renderPresetFields();
   }
 
@@ -580,28 +998,27 @@
     const preset =
       selectedPreset();
 
+
     if (
       !preset.fields.length
     ) {
 
       $('presetFields').innerHTML =
         `
-        <span class="field-chip">
-          <b>Geen parameter ingesteld</b>
-          <small>
-            Selecteer een object en kies
-            "Preset aanpassen".
-          </small>
-        </span>
+          <span class="field-chip">
+            <b>Geen parameter ingesteld</b>
+            <small>
+              Selecteer een object en kies Preset aanpassen.
+            </small>
+          </span>
         `;
 
     } else {
 
       $('presetFields').innerHTML =
-        preset.fields.map(
-          field => {
+        preset.fields.map(field => {
 
-            return `
+          return `
             <span class="field-chip">
 
               <b>
@@ -623,13 +1040,14 @@
               </small>
 
             </span>
-            `;
-          }
-        ).join('');
+          `;
+        }).join('');
     }
+
 
     $('editPreset').disabled =
       false;
+
 
     $('deletePreset')
       .style.visibility =
@@ -641,7 +1059,7 @@
 
 
   /* =========================================================
-     VERBINDEN
+     TRIMBLE VERBINDING
      ========================================================= */
 
   async function connect() {
@@ -649,15 +1067,15 @@
     try {
 
       if (
-        !window.TrimbleConnectWorkspace
-        ||
+        !window.TrimbleConnectWorkspace ||
         window.parent === window
       ) {
 
         throw new Error(
-          'Niet in Trimble Connect'
+          'Niet geopend in Trimble Connect'
         );
       }
+
 
       API =
         await TrimbleConnectWorkspace
@@ -670,32 +1088,40 @@
             30000
           );
 
+
       $('connectionBadge')
         .textContent =
           'Trimble Connect';
 
+
       $('connectionBadge')
         .classList
         .add('ok');
+
 
       await refreshSelection();
 
     } catch (error) {
 
       console.error(
-        'Trimble verbinding:',
+        'Trimble Connect verbinding:',
         error
       );
 
-      API = null;
+
+      API =
+        null;
+
 
       $('connectionBadge')
         .textContent =
           'Preview';
 
+
       $('connectionBadge')
         .classList
         .add('demo');
+
 
       setStatus(
         'Open de extensie in Trimble Connect.'
@@ -704,7 +1130,9 @@
   }
 
 
-  function onWorkspaceEvent(event) {
+  function onWorkspaceEvent(
+    event
+  ) {
 
     if (
       event ===
@@ -717,7 +1145,7 @@
 
 
   /* =========================================================
-     SELECTIE UITLEZEN
+     SELECTIE + ECHTE PARAMETERS UITLEZEN
      ========================================================= */
 
   async function refreshSelection() {
@@ -726,24 +1154,29 @@
       return;
     }
 
+
     setStatus(
       'Parameters uit Trimble Connect lezen...'
     );
 
+
     try {
 
-      const rows = [];
-      const seen = new Set();
+      const rows =
+        [];
 
-      /*
-       * =============================================
-       * STAP 1
-       *
-       * Geselecteerde runtime IDs ophalen.
-       * =============================================
-       */
+      const seen =
+        new Set();
 
-      let selectedGroups = [];
+
+      /* -----------------------------------------------------
+         ROUTE 1
+         getObjects({ selected: true })
+         ----------------------------------------------------- */
+
+      let selectedGroups =
+        [];
+
 
       try {
 
@@ -758,25 +1191,11 @@
       } catch (error) {
 
         console.warn(
-          'getObjects selected:',
+          'getObjects({selected:true}) mislukt:',
           error
         );
       }
 
-
-      /*
-       * =============================================
-       * STAP 2
-       *
-       * PER MODEL:
-       *
-       * getObjectProperties()
-       *
-       * gebruiken.
-       *
-       * Dit is de bron voor de parameters.
-       * =============================================
-       */
 
       for (
         const group
@@ -786,40 +1205,52 @@
         const modelId =
           group?.modelId;
 
+
         if (!modelId) {
           continue;
         }
 
+
         const selectedObjects =
           Array.isArray(
-            group.objects
+            group?.objects
           )
-
             ? group.objects
-
             : [];
+
 
         const runtimeIds =
           selectedObjects
-            .map(object =>
-              Number(object?.id)
+            .map(
+              object =>
+                Number(
+                  object?.id
+                )
             )
             .filter(
               Number.isFinite
             );
 
-        if (
-          !runtimeIds.length
-        ) {
 
+        if (!runtimeIds.length) {
           continue;
         }
 
-        let objectProperties = [];
+
+        let fullObjects =
+          [];
+
 
         try {
 
-          objectProperties =
+          /*
+           * BELANGRIJK:
+           *
+           * Volledige properties expliciet
+           * bij Trimble opvragen.
+           */
+
+          fullObjects =
             await API.viewer
               .getObjectProperties(
                 modelId,
@@ -831,19 +1262,25 @@
         } catch (error) {
 
           console.error(
-            'getObjectProperties fout:',
+            'getObjectProperties mislukt:',
             modelId,
             runtimeIds,
             error
           );
 
-          continue;
+
+          /*
+           * Fallback op objecten uit getObjects.
+           */
+
+          fullObjects =
+            selectedObjects;
         }
 
 
         for (
           const object
-          of objectProperties
+          of fullObjects
         ) {
 
           const runtimeId =
@@ -851,26 +1288,29 @@
               object?.id
             );
 
+
           if (
             !Number.isFinite(
               runtimeId
             )
           ) {
-
             continue;
           }
 
-          const uniqueKey =
+
+          const key =
             `${modelId}:${runtimeId}`;
 
-          if (
-            seen.has(uniqueKey)
-          ) {
 
+          if (
+            seen.has(key)
+          ) {
             continue;
           }
 
-          seen.add(uniqueKey);
+
+          seen.add(key);
+
 
           rows.push({
             modelId,
@@ -881,18 +1321,16 @@
       }
 
 
-      /*
-       * =============================================
-       * FALLBACK
-       *
-       * Indien getObjects niets geeft:
-       * getSelection gebruiken.
-       * =============================================
-       */
+      /* -----------------------------------------------------
+         ROUTE 2
+         fallback getSelection()
+         ----------------------------------------------------- */
 
       if (!rows.length) {
 
-        let selection = [];
+        let selection =
+          [];
+
 
         try {
 
@@ -904,8 +1342,8 @@
 
         } catch (error) {
 
-          console.error(
-            'getSelection fout:',
+          console.warn(
+            'getSelection mislukt:',
             error
           );
         }
@@ -919,9 +1357,11 @@
           const modelId =
             group?.modelId;
 
+
           if (!modelId) {
             continue;
           }
+
 
           const runtimeIds =
             Array.isArray(
@@ -937,19 +1377,19 @@
 
               : [];
 
-          if (
-            !runtimeIds.length
-          ) {
 
+          if (!runtimeIds.length) {
             continue;
           }
 
 
-          let objectProperties = [];
+          let fullObjects =
+            [];
+
 
           try {
 
-            objectProperties =
+            fullObjects =
               await API.viewer
                 .getObjectProperties(
                   modelId,
@@ -961,7 +1401,7 @@
           } catch (error) {
 
             console.error(
-              'Fallback getObjectProperties fout:',
+              'Fallback getObjectProperties mislukt:',
               error
             );
 
@@ -971,7 +1411,7 @@
 
           for (
             const object
-            of objectProperties
+            of fullObjects
           ) {
 
             const runtimeId =
@@ -979,30 +1419,29 @@
                 object?.id
               );
 
+
             if (
               !Number.isFinite(
                 runtimeId
               )
             ) {
-
               continue;
             }
 
-            const uniqueKey =
+
+            const key =
               `${modelId}:${runtimeId}`;
 
-            if (
-              seen.has(
-                uniqueKey
-              )
-            ) {
 
+            if (
+              seen.has(key)
+            ) {
               continue;
             }
 
-            seen.add(
-              uniqueKey
-            );
+
+            seen.add(key);
+
 
             rows.push({
               modelId,
@@ -1014,11 +1453,9 @@
       }
 
 
-      /*
-       * =============================================
-       * RESULTAAT
-       * =============================================
-       */
+      /* -----------------------------------------------------
+         RESULTAAT
+         ----------------------------------------------------- */
 
       selectionRows =
         rows;
@@ -1044,13 +1481,16 @@
           .textContent =
             'Selecteer één of meer elementen in de 3D Viewer.';
 
+
         renderPresets(
-          $('presetSelect').value
+          $('presetSelect')?.value
         );
+
 
         setStatus(
           'Geen geselecteerde objecten gevonden.'
         );
+
 
         return;
       }
@@ -1058,21 +1498,18 @@
 
       $('selectionHint')
         .textContent =
+          `${fields.length} parameters rechtstreeks uit Trimble gelezen.`;
 
-          `${fields.length} echte parameters uit Trimble gelezen.`;
 
+      /* -----------------------------------------------------
+         DEBUG
 
-      /*
-       * =============================================
-       * DEBUG
-       *
-       * Dit toont EXACT wat Trimble
-       * aan de extensie terugstuurt.
-       * =============================================
-       */
+         F12 -> Console laat exact zien
+         wat Trimble terugstuurt.
+         ----------------------------------------------------- */
 
       console.group(
-        'ALTEZ OBJECTINFO - TRIMBLE PARAMETERS'
+        'ALTEZ OBJECTINFO V6 - TRIMBLE PROPERTIES'
       );
 
 
@@ -1082,7 +1519,7 @@
       ) {
 
         console.log(
-          'OBJECT',
+          'Object:',
           {
             modelId:
               row.modelId,
@@ -1090,14 +1527,13 @@
             runtimeId:
               row.id,
 
-            rawObject:
+            raw:
               row.object
           }
         );
 
 
         console.table(
-
           flattenProperties(
             row.object
           ).map(
@@ -1115,6 +1551,14 @@
               Value:
                 safeValue(
                   property.value
+                ),
+
+              Unit:
+                property.unit,
+
+              DetectedUnit:
+                detectUnit(
+                  property
                 )
             })
           )
@@ -1123,7 +1567,7 @@
 
 
       console.log(
-        'UNIEKE PARAMETERS',
+        'Beschikbare parameters:',
         fields
       );
 
@@ -1132,17 +1576,16 @@
 
 
       /*
-       * Presets opnieuw renderen
-       * NA parameteruitlezing.
+       * Presets pas NU opnieuw renderen.
        */
 
       renderPresets(
-        $('presetSelect').value
+        $('presetSelect')?.value
       );
 
 
       setStatus(
-        `${rows.length} object(en) - ${fields.length} echte parameters ingelezen.`
+        `${rows.length} object(en) - ${fields.length} parameters ingelezen.`
       );
 
 
@@ -1153,21 +1596,28 @@
         error
       );
 
-      selectionRows = [];
+
+      selectionRows =
+        [];
+
 
       $('selectedCount')
         .textContent =
           '0';
 
+
       $('markCount')
         .textContent =
           '0';
+
 
       $('selectionHint')
         .textContent =
           'Selecteer één of meer elementen in de 3D Viewer.';
 
+
       renderPresets();
+
 
       setStatus(
         `Parameters uitlezen mislukt: ${error?.message || error}`
@@ -1180,25 +1630,27 @@
      PRESET EDITOR
      ========================================================= */
 
-  function openPresetDialog(preset) {
+  function openPresetDialog(
+    preset
+  ) {
 
     editingPresetId =
-      preset?.id || null;
+      preset?.id ||
+      null;
 
 
     $('dialogTitle')
       .textContent =
 
         preset
-
           ? `Preset ${preset.name} aanpassen`
-
           : 'Nieuwe preset';
 
 
     $('presetName')
       .value =
-        preset?.name || '';
+        preset?.name ||
+        '';
 
 
     $('presetName')
@@ -1208,23 +1660,23 @@
 
     dialogFields =
       clone(
-        preset?.fields || []
+        preset?.fields ||
+        []
       );
 
 
     /*
-       Lege preset?
+     * Lege preset?
+     *
+     * Eerst echte Cast Unit Mark.
+     * Anders eerste echte parameter.
+     */
 
-       Dan eerst Cast Unit Mark,
-       anders eerste echte parameter.
-    */
-
-    if (
-      !dialogFields.length
-    ) {
+    if (!dialogFields.length) {
 
       const mark =
         findCastUnitMarkField();
+
 
       const first =
         mark ||
@@ -1262,22 +1714,21 @@
 
 
     const options =
-      available.map(
-        field => {
+      available.map(field => {
 
-          const setName =
-            field.set ||
-            'Zonder propertyset';
+        const setName =
+          field.set ||
+          'Zonder propertyset';
 
-          return `
-            <option value="${escapeHtml(fieldKey(field))}">
-              ${escapeHtml(setName)}
-              →
-              ${escapeHtml(field.name)}
-            </option>
-          `;
-        }
-      ).join('');
+
+        return `
+          <option value="${escapeHtml(fieldKey(field))}">
+            ${escapeHtml(setName)}
+            →
+            ${escapeHtml(field.name)}
+          </option>
+        `;
+      }).join('');
 
 
     $('selectedFields')
@@ -1287,66 +1738,72 @@
           (field, index) => {
 
             return `
-            <div
-              class="preset-field-row"
-              data-index="${index}"
-            >
+              <div
+                class="preset-field-row"
+                data-index="${index}"
+              >
 
-              <div class="field-row-top">
+                <div class="field-row-top">
 
-                <span class="order-number">
-                  ${index + 1}
-                </span>
+                  <span class="order-number">
+                    ${index + 1}
+                  </span>
 
-                <select
-                  class="parameter-select"
-                  data-action="parameter"
-                >
-                  ${options}
-                </select>
+                  <select
+                    class="parameter-select"
+                    data-action="parameter"
+                  >
+                    ${options}
+                  </select>
 
-                <button
-                  type="button"
-                  class="mini-btn"
-                  data-action="up"
-                >
-                  ↑
-                </button>
+                  <button
+                    type="button"
+                    class="mini-btn"
+                    data-action="up"
+                    title="Omhoog"
+                  >
+                    ↑
+                  </button>
 
-                <button
-                  type="button"
-                  class="mini-btn"
-                  data-action="down"
-                >
-                  ↓
-                </button>
+                  <button
+                    type="button"
+                    class="mini-btn"
+                    data-action="down"
+                    title="Omlaag"
+                  >
+                    ↓
+                  </button>
 
-                <button
-                  type="button"
-                  class="mini-btn remove"
-                  data-action="remove"
-                >
-                  ×
-                </button>
+                  <button
+                    type="button"
+                    class="mini-btn remove"
+                    data-action="remove"
+                    title="Verwijderen"
+                  >
+                    ×
+                  </button>
+
+                </div>
+
+
+                <label class="alias-row">
+
+                  <span>
+                    Naam in label
+                  </span>
+
+                  <input
+                    data-action="label"
+                    value="${escapeHtml(
+                      field.label ||
+                      field.name
+                    )}"
+                    maxlength="60"
+                  >
+
+                </label>
 
               </div>
-
-
-              <label class="alias-row">
-
-                <span>
-                  Naam in label
-                </span>
-
-                <input
-                  data-action="label"
-                  value="${escapeHtml(field.label || field.name)}"
-                  maxlength="40"
-                >
-
-              </label>
-
-            </div>
             `;
           }
         ).join('');
@@ -1366,6 +1823,7 @@
           row.querySelector(
             '.parameter-select'
           );
+
 
         const key =
           fieldKey(
@@ -1465,6 +1923,10 @@
       event.target.dataset.action;
 
 
+    /* -----------------------------------------------------
+       PARAMETER WIJZIGEN
+       ----------------------------------------------------- */
+
     if (
       action ===
       'parameter'
@@ -1482,25 +1944,46 @@
 
       if (selected) {
 
+        /*
+         * BELANGRIJK:
+         *
+         * Bestaande "Naam in label"
+         * NIET overschrijven.
+         */
+
+        const oldLabel =
+          dialogFields[index]
+            ?.label;
+
+
         dialogFields[index] = {
           ...selected,
+
           label:
+            oldLabel ||
             selected.name
         };
       }
     }
 
 
+    /* -----------------------------------------------------
+       NAAM IN LABEL
+       ----------------------------------------------------- */
+
     else if (
       action ===
       'label'
     ) {
 
-      dialogFields[index]
-        .label =
-          event.target.value;
+      dialogFields[index].label =
+        event.target.value;
     }
 
+
+    /* -----------------------------------------------------
+       VERWIJDEREN
+       ----------------------------------------------------- */
 
     else if (
       action ===
@@ -1512,13 +1995,17 @@
         1
       );
 
+
       renderDialogFields();
     }
 
 
+    /* -----------------------------------------------------
+       OMHOOG
+       ----------------------------------------------------- */
+
     else if (
-      action === 'up'
-      &&
+      action === 'up' &&
       index > 0
     ) {
 
@@ -1535,9 +2022,12 @@
     }
 
 
+    /* -----------------------------------------------------
+       OMLAAG
+       ----------------------------------------------------- */
+
     else if (
-      action === 'down'
-      &&
+      action === 'down' &&
       index <
         dialogFields.length - 1
     ) {
@@ -1563,9 +2053,7 @@
     event.preventDefault();
 
 
-    if (
-      !dialogFields.length
-    ) {
+    if (!dialogFields.length) {
 
       setStatus(
         'Voeg minstens één parameter toe.'
@@ -1591,23 +2079,43 @@
 
 
     if (!name) {
+
+      setStatus(
+        'Geef de preset een naam.'
+      );
+
       return;
     }
 
 
+    /*
+     * BELANGRIJK:
+     *
+     * label wordt expliciet opgeslagen.
+     */
+
     const cleanFields =
-      dialogFields.map(
-        field => ({
-          set: field.set,
-          name: field.name,
+      dialogFields.map(field => {
+
+        const customLabel =
+          String(
+            field.label ||
+            field.name
+          ).trim();
+
+
+        return {
+          set:
+            field.set,
+
+          name:
+            field.name,
 
           label:
-            String(
-              field.label ||
-              field.name
-            ).trim()
-        })
-      );
+            customLabel ||
+            field.name
+        };
+      });
 
 
     if (isBuiltin) {
@@ -1657,7 +2165,9 @@
 
         presets[index] = {
           ...presets[index],
+
           name,
+
           fields:
             cleanFields
         };
@@ -1709,9 +2219,9 @@
           color => {
 
             const selected =
-              color.toLowerCase()
-              ===
+              color.toLowerCase() ===
               selectedColor.toLowerCase();
+
 
             return `
               <button
@@ -1735,7 +2245,9 @@
   }
 
 
-  function chooseColor(color) {
+  function chooseColor(
+    color
+  ) {
 
     selectedColor =
       color;
@@ -1751,7 +2263,9 @@
   }
 
 
-  function colorToRGBA(hex) {
+  function colorToRGBA(
+    hex
+  ) {
 
     const number =
       parseInt(
@@ -1761,18 +2275,14 @@
 
 
     return {
-
       r:
-        (number >> 16)
-        & 255,
+        (number >> 16) & 255,
 
       g:
-        (number >> 8)
-        & 255,
+        (number >> 8) & 255,
 
       b:
-        number
-        & 255,
+        number & 255,
 
       a:
         255
@@ -1802,46 +2312,38 @@
 
         x:
           (
-            Number(bb.min.x)
-            +
+            Number(bb.min.x) +
             Number(bb.max.x)
           ) / 2,
 
         y:
           (
-            Number(bb.min.y)
-            +
+            Number(bb.min.y) +
             Number(bb.max.y)
           ) / 2,
 
         z:
           (
-            Number(bb.min.z)
-            +
+            Number(bb.min.z) +
             Number(bb.max.z)
           ) / 2,
 
 
         sizeX:
           Math.abs(
-            Number(bb.max.x)
-            -
+            Number(bb.max.x) -
             Number(bb.min.x)
           ),
 
-
         sizeY:
           Math.abs(
-            Number(bb.max.y)
-            -
+            Number(bb.max.y) -
             Number(bb.min.y)
           ),
 
-
         sizeZ:
           Math.abs(
-            Number(bb.max.z)
-            -
+            Number(bb.max.z) -
             Number(bb.min.z)
           )
       };
@@ -1851,18 +2353,14 @@
     if (fallback) {
 
       return {
-
         x:
-          Number(fallback.x)
-          || 0,
+          Number(fallback.x) || 0,
 
         y:
-          Number(fallback.y)
-          || 0,
+          Number(fallback.y) || 0,
 
         z:
-          Number(fallback.z)
-          || 0,
+          Number(fallback.z) || 0,
 
         sizeX: 1,
         sizeY: 1,
@@ -1882,9 +2380,9 @@
 
     const size =
       Math.max(
-        center.sizeX,
-        center.sizeY,
-        center.sizeZ,
+        center.sizeX || 0,
+        center.sizeY || 0,
+        center.sizeZ || 0,
         1
       );
 
@@ -1897,36 +2395,27 @@
 
 
     const angle =
-      (index % 8)
-      *
+      (index % 8) *
       Math.PI / 4;
 
 
     return {
 
       x:
-        center.x
-        +
-        Math.cos(angle)
-        *
+        center.x +
+        Math.cos(angle) *
         distance,
-
 
       y:
-        center.y
-        +
-        Math.sin(angle)
-        *
+        center.y +
+        Math.sin(angle) *
         distance,
 
-
       z:
-        center.z
-        +
+        center.z +
         Math.max(
           0.6,
-          center.sizeZ
-          *
+          (center.sizeZ || 1) *
           0.4
         )
     };
@@ -1934,7 +2423,78 @@
 
 
   /* =========================================================
-     LABELS
+     LABELTEKST MAKEN
+     ========================================================= */
+
+  function buildLabelLines(
+    object,
+    preset,
+    hideEmpty
+  ) {
+
+    const lines =
+      [];
+
+
+    for (
+      const field
+      of preset.fields
+    ) {
+
+      const value =
+        fieldValue(
+          object,
+          field
+        );
+
+
+      const hasValue =
+        String(value || '')
+          .trim() !== '';
+
+
+      if (
+        hideEmpty &&
+        !hasValue
+      ) {
+        continue;
+      }
+
+
+      /*
+       * BELANGRIJK:
+       *
+       * Ook bij 1 parameter wordt nu
+       * "Naam in label" getoond.
+       *
+       * Bijvoorbeeld:
+       *
+       * Merk: K12
+       *
+       * of
+       *
+       * Oppervlakte: 42.50 m²
+       */
+
+      const label =
+        String(
+          field.label ||
+          field.name
+        ).trim();
+
+
+      lines.push(
+        `${label}: ${hasValue ? value : '-'}`
+      );
+    }
+
+
+    return lines;
+  }
+
+
+  /* =========================================================
+     LABELS PLAATSEN
      ========================================================= */
 
   async function placeLabels() {
@@ -1949,12 +2509,10 @@
     }
 
 
-    if (
-      !selectionRows.length
-    ) {
+    if (!selectionRows.length) {
 
       setStatus(
-        'Selecteer eerst objecten.'
+        'Selecteer eerst één of meer objecten.'
       );
 
       return;
@@ -1965,12 +2523,10 @@
       selectedPreset();
 
 
-    if (
-      !preset.fields.length
-    ) {
+    if (!preset.fields.length) {
 
       setStatus(
-        'De preset bevat geen parameters.'
+        'De gekozen preset bevat geen parameters.'
       );
 
       return;
@@ -1990,19 +2546,22 @@
       $('hideEmpty').checked;
 
 
-    const markups = [];
+    const markups =
+      [];
 
 
     /*
-       Iedere runtime-ID afzonderlijk.
-
-       GEEN groepering op merk.
-    */
+     * =====================================================
+     * GEEN GROEPERING
+     *
+     * Iedere geselecteerde runtime-ID krijgt
+     * zijn eigen label.
+     * =====================================================
+     */
 
     for (
       let index = 0;
-      index <
-        selectionRows.length;
+      index < selectionRows.length;
       index++
     ) {
 
@@ -2010,51 +2569,12 @@
         selectionRows[index];
 
 
-      const lines = [];
-
-
-      for (
-        const field
-        of preset.fields
-      ) {
-
-        const value =
-          fieldValue(
-            row.object,
-            field
-          );
-
-
-        const hasValue =
-          value.trim() !== '';
-
-
-        if (
-          hideEmpty &&
-          !hasValue
-        ) {
-
-          continue;
-        }
-
-
-        if (
-          preset.fields.length === 1
-        ) {
-
-          lines.push(
-            hasValue
-              ? value
-              : '-'
-          );
-
-        } else {
-
-          lines.push(
-            `${field.label || field.name}: ${hasValue ? value : '-'}`
-          );
-        }
-      }
+      const lines =
+        buildLabelLines(
+          row.object,
+          preset,
+          hideEmpty
+        );
 
 
       if (!lines.length) {
@@ -2062,7 +2582,8 @@
       }
 
 
-      let box = null;
+      let box =
+        null;
 
 
       try {
@@ -2079,9 +2600,8 @@
           (boxes || [])
             .find(
               item =>
-                Number(item?.id)
-                ===
-                row.id
+                Number(item?.id) ===
+                Number(row.id)
             )
 
           ||
@@ -2096,7 +2616,8 @@
       } catch (error) {
 
         console.warn(
-          'Bounding box fout',
+          'Bounding box fout:',
+          row.id,
           error
         );
       }
@@ -2110,6 +2631,12 @@
 
 
       if (!center) {
+
+        console.warn(
+          'Geen positie gevonden voor:',
+          row.id
+        );
+
         continue;
       }
 
@@ -2182,6 +2709,10 @@
 
     try {
 
+      /*
+       * Eerst in één keer.
+       */
+
       const added =
         await API.markup
           .addTextMarkup(
@@ -2197,8 +2728,7 @@
           )
           .filter(
             id =>
-              id !== undefined
-              &&
+              id !== undefined &&
               id !== null
           );
 
@@ -2210,19 +2740,23 @@
 
     } catch (bulkError) {
 
-      /*
-         Fallback:
-         labels één voor één.
-      */
-
       console.warn(
-        'Bulk markup mislukt',
+        'Bulk plaatsen mislukt, individueel proberen:',
         bulkError
       );
 
 
-      let placed = 0;
+      activeMarkupIds =
+        [];
 
+
+      let placed =
+        0;
+
+
+      /*
+       * Fallback één per één.
+       */
 
       for (
         const markup
@@ -2244,8 +2778,8 @@
           ) {
 
             if (
-              result?.id !==
-                undefined
+              result?.id !== undefined &&
+              result?.id !== null
             ) {
 
               activeMarkupIds.push(
@@ -2261,7 +2795,7 @@
         } catch (error) {
 
           console.error(
-            'Label mislukt',
+            'Individueel label mislukt:',
             error
           );
         }
@@ -2274,6 +2808,10 @@
     }
   }
 
+
+  /* =========================================================
+     LABELS VERWIJDEREN
+     ========================================================= */
 
   async function clearLabels(
     updateStatus = true
@@ -2294,14 +2832,15 @@
       } catch (error) {
 
         console.warn(
-          'Markups verwijderen:',
+          'Labels verwijderen mislukt:',
           error
         );
       }
     }
 
 
-    activeMarkupIds = [];
+    activeMarkupIds =
+      [];
 
 
     if (updateStatus) {
@@ -2358,10 +2897,7 @@
           selectedPreset();
 
 
-        if (
-          preset.builtin
-        ) {
-
+        if (preset.builtin) {
           return;
         }
 
@@ -2382,6 +2918,11 @@
 
         renderPresets(
           'builtin-mark'
+        );
+
+
+        setStatus(
+          'Preset verwijderd.'
         );
       }
     );
