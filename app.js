@@ -1,9 +1,13 @@
 (() => {
   'use strict';
 
-  const STORAGE_KEY = 'altez-objectinfo-presets-v4';
-  const DEFAULT_OVERRIDE_KEY = 'altez-objectinfo-default-preset-v4';
-  const COLOR_KEY = 'altez-objectinfo-color-v4';
+  /* =========================================================
+     ALTEZ OBJECTINFO
+     ========================================================= */
+
+  const STORAGE_KEY = 'altez-objectinfo-presets-v5';
+  const DEFAULT_KEY = 'altez-objectinfo-default-v5';
+  const COLOR_KEY = 'altez-objectinfo-color-v5';
 
   const TRIMBLE_COLORS = [
     '#f44336','#ff7043','#ff9800','#ffc107','#ffeb3b','#cddc39','#8bc34a',
@@ -15,14 +19,23 @@
   ];
 
   let API = null;
+
   let selectionRows = [];
   let activeMarkupIds = [];
+
   let editingPresetId = null;
   let dialogFields = [];
+
   let selectedColor =
     localStorage.getItem(COLOR_KEY) || '#f44336';
 
-  const $ = id => document.getElementById(id);
+  const $ = id =>
+    document.getElementById(id);
+
+
+  /* =========================================================
+     ALGEMEEN
+     ========================================================= */
 
   function clone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -35,17 +48,26 @@
       .replace(/\s+/g, ' ');
   }
 
-  function compactName(value) {
-    return normalize(value).replace(/[^a-z0-9]/g, '');
+  function compact(value) {
+    return normalize(value)
+      .replace(/[^a-z0-9]/g, '');
   }
 
   function safeValue(value) {
+    if (value === null || value === undefined) {
+      return '';
+    }
+
     if (typeof value === 'bigint') {
       return value.toString();
     }
 
-    if (value === null || value === undefined) {
-      return '';
+    if (typeof value === 'object') {
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return String(value);
+      }
     }
 
     return String(value);
@@ -53,47 +75,72 @@
 
   function escapeHtml(value) {
     return String(value ?? '').replace(
-      /[&<>'"]/g,
+      /[&<>"']/g,
       character => ({
         '&': '&amp;',
         '<': '&lt;',
         '>': '&gt;',
-        "'": '&#39;',
-        '"': '&quot;'
+        '"': '&quot;',
+        "'": '&#39;'
       }[character])
     );
   }
 
-  /*
-   * ============================================================
-   * PROPERTIES
-   * ============================================================
-   *
-   * Heel belangrijk:
-   *
-   * We gebruiken alleen properties die Trimble werkelijk
-   * terugstuurt.
-   *
-   * Er wordt dus GEEN:
-   *
-   * Tekla Assembly -> Cast Unit Mark
-   *
-   * meer kunstmatig toegevoegd.
-   */
+  function setStatus(text) {
+    $('status').textContent = text;
+  }
+
+
+  /* =========================================================
+     RAW TRIMBLE PROPERTIES
+     =========================================================
+
+     Hier wordt NIETS toegevoegd.
+
+     We nemen uitsluitend:
+
+     ObjectProperties.properties
+        -> PropertySet.set
+        -> PropertySet.properties
+        -> Property.name
+        -> Property.value
+
+     ========================================================= */
 
   function flattenProperties(object) {
     const result = [];
 
-    for (const propertySet of (object?.properties || [])) {
+    if (!object) {
+      return result;
+    }
+
+    const propertySets =
+      Array.isArray(object.properties)
+        ? object.properties
+        : [];
+
+    for (const propertySet of propertySets) {
+
+      if (!propertySet) {
+        continue;
+      }
 
       const setName =
-        String(propertySet?.set || '').trim();
+        String(propertySet.set ?? '').trim();
 
-      for (const property of
-        (propertySet?.properties || [])) {
+      const properties =
+        Array.isArray(propertySet.properties)
+          ? propertySet.properties
+          : [];
+
+      for (const property of properties) {
+
+        if (!property) {
+          continue;
+        }
 
         const propertyName =
-          String(property?.name || '').trim();
+          String(property.name ?? '').trim();
 
         if (!propertyName) {
           continue;
@@ -102,8 +149,8 @@
         result.push({
           set: setName,
           name: propertyName,
-          value: safeValue(property?.value),
-          type: property?.type
+          type: property.type,
+          value: property.value
         });
       }
     }
@@ -111,19 +158,25 @@
     return result;
   }
 
+
+  /* =========================================================
+     PARAMETER ID
+     ========================================================= */
+
   function fieldKey(field) {
-    return (
-      `${field?.set || ''}\u0000${field?.name || ''}`
-    );
+    return JSON.stringify([
+      field?.set || '',
+      field?.name || ''
+    ]);
   }
 
-  /*
-   * Alle werkelijk gevonden parameters uit de selectie.
-   */
+
+  /* =========================================================
+     ALLE ECHT BESCHIKBARE PARAMETERS
+     ========================================================= */
 
   function getAvailableFields() {
-
-    const fields = new Map();
+    const map = new Map();
 
     for (const row of selectionRows) {
 
@@ -135,9 +188,9 @@
         const key =
           fieldKey(property);
 
-        if (!fields.has(key)) {
+        if (!map.has(key)) {
 
-          fields.set(key, {
+          map.set(key, {
             set: property.set,
             name: property.name,
             label: property.name
@@ -146,271 +199,279 @@
       }
     }
 
-    return [...fields.values()].sort(
-      (a, b) => {
+    return Array.from(map.values())
+      .sort((a, b) => {
 
-        const textA =
-          `${a.set || 'Algemeen'} ${a.name}`;
+        const setA =
+          a.set || '';
 
-        const textB =
-          `${b.set || 'Algemeen'} ${b.name}`;
+        const setB =
+          b.set || '';
 
-        return textA.localeCompare(
-          textB,
-          'nl'
+        const compareSet =
+          setA.localeCompare(
+            setB,
+            undefined,
+            {
+              numeric: true,
+              sensitivity: 'base'
+            }
+          );
+
+        if (compareSet !== 0) {
+          return compareSet;
+        }
+
+        return a.name.localeCompare(
+          b.name,
+          undefined,
+          {
+            numeric: true,
+            sensitivity: 'base'
+          }
         );
-      }
-    );
+      });
   }
 
-  /*
-   * Zoek automatisch de echte Cast Unit Mark.
-   *
-   * Voorbeelden die hiermee worden herkend:
-   *
-   * Cast Unit Mark
-   * Assembly/Cast unit Mark
-   * CAST_UNIT_MARK
-   * enz.
-   */
 
-  function findRealCastUnitMarkField() {
+  /* =========================================================
+     CAST UNIT MARK HERKENNEN
 
+     Alleen gebruikt om standaardpreset "Merk"
+     automatisch te kiezen.
+
+     Er wordt GEEN parameter toegevoegd.
+     ========================================================= */
+
+  function findCastUnitMarkField() {
     const fields =
       getAvailableFields();
 
-    const candidates =
-      fields.map(field => {
+    let best = null;
+    let bestScore = 0;
 
-        const name =
-          compactName(field.name);
+    for (const field of fields) {
 
-        const full =
-          compactName(
-            `${field.set}/${field.name}`
-          );
+      const name =
+        compact(field.name);
 
-        let score = 0;
+      const full =
+        compact(
+          `${field.set} ${field.name}`
+        );
 
-        if (
-          name ===
-          'assemblycastunitmark'
-        ) {
-          score = 100;
-        }
+      let score = 0;
 
-        else if (
-          name ===
+      if (
+        name ===
+        'assemblycastunitmark'
+      ) {
+        score = 100;
+      }
+
+      else if (
+        name ===
+        'castunitmark'
+      ) {
+        score = 95;
+      }
+
+      else if (
+        name.endsWith(
           'castunitmark'
-        ) {
-          score = 95;
-        }
+        )
+      ) {
+        score = 90;
+      }
 
-        else if (
-          name.endsWith(
-            'castunitmark'
-          )
-        ) {
-          score = 90;
-        }
+      else if (
+        full.includes(
+          'assemblycastunitmark'
+        )
+      ) {
+        score = 85;
+      }
 
-        else if (
-          full.includes(
-            'assemblycastunitmark'
-          )
-        ) {
-          score = 85;
-        }
-
-        return {
-          field,
-          score
-        };
-      });
-
-    candidates.sort(
-      (a, b) =>
-        b.score - a.score
-    );
-
-    if (
-      candidates.length &&
-      candidates[0].score > 0
-    ) {
-
-      return candidates[0].field;
-    }
-
-    return null;
-  }
-
-  /*
-   * Als een oude preset nog een oude naam bevat,
-   * proberen we hem naar de werkelijk aanwezige
-   * property te koppelen.
-   */
-
-  function resolveField(field) {
-
-    const available =
-      getAvailableFields();
-
-    /*
-     * Eerst exacte match.
-     */
-
-    let match =
-      available.find(candidate =>
-
-        normalize(candidate.set) ===
-          normalize(field?.set)
-
-        &&
-
-        normalize(candidate.name) ===
-          normalize(field?.name)
-      );
-
-    if (match) {
-      return match;
-    }
-
-    /*
-     * Oude Cast Unit Mark preset migreren.
-     */
-
-    if (
-      compactName(field?.name) ===
-      'castunitmark'
-    ) {
-
-      match =
-        findRealCastUnitMarkField();
-
-      if (match) {
-        return match;
+      if (score > bestScore) {
+        best = field;
+        bestScore = score;
       }
     }
 
-    /*
-     * Laatste fallback:
-     * exact dezelfde propertynaam.
-     */
-
-    match =
-      available.find(candidate =>
-
-        normalize(candidate.name) ===
-        normalize(field?.name)
-      );
-
-    return match || null;
+    return best;
   }
 
-  /*
-   * ============================================================
-   * PRESETS
-   * ============================================================
-   */
+
+  /* =========================================================
+     WAARDE VAN PARAMETER
+     ========================================================= */
+
+  function fieldValue(object, field) {
+
+    const properties =
+      flattenProperties(object);
+
+    /*
+       Eerst 100% exacte match.
+    */
+
+    let property =
+      properties.find(item =>
+
+        item.set === field.set
+        &&
+        item.name === field.name
+      );
+
+    /*
+       Daarna case-insensitive exacte match.
+    */
+
+    if (!property) {
+
+      property =
+        properties.find(item =>
+
+          normalize(item.set) ===
+            normalize(field.set)
+
+          &&
+
+          normalize(item.name) ===
+            normalize(field.name)
+        );
+    }
+
+    /*
+       Alleen voor Cast Unit Mark:
+       naamfallback.
+    */
+
+    if (
+      !property &&
+      compact(field.name)
+        .includes('castunitmark')
+    ) {
+
+      property =
+        properties.find(item =>
+
+          compact(item.name)
+            .endsWith(
+              'castunitmark'
+            )
+        );
+    }
+
+    return property
+      ? safeValue(property.value)
+      : '';
+  }
+
+
+  /* =========================================================
+     PRESETS OPSLAAN
+     ========================================================= */
 
   function getCustomPresets() {
-
     try {
-
       return JSON.parse(
         localStorage.getItem(
           STORAGE_KEY
         ) || '[]'
       );
-
     } catch {
-
       return [];
     }
   }
 
-  function saveCustomPresets(
-    presets
-  ) {
-
+  function saveCustomPresets(presets) {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify(presets)
     );
   }
 
-  /*
-   * Standaardpreset MERK.
-   *
-   * Deze wordt dynamisch gekoppeld aan
-   * de werkelijk gevonden Cast Unit Mark.
-   */
+
+  /* =========================================================
+     STANDAARDPRESET MERK
+     ========================================================= */
 
   function getDefaultPreset() {
 
-    let saved = null;
+    /*
+       Eerst opgeslagen versie proberen.
+    */
 
     try {
 
-      saved =
+      const saved =
         JSON.parse(
           localStorage.getItem(
-            DEFAULT_OVERRIDE_KEY
+            DEFAULT_KEY
           ) || 'null'
         );
 
-    } catch {}
-
-    /*
-     * Eerst kijken of gebruiker
-     * de preset Merk heeft aangepast.
-     */
-
-    if (
-      saved?.fields?.length
-    ) {
-
-      const resolvedFields =
-        saved.fields
-          .map(field => {
-
-            const resolved =
-              resolveField(field);
-
-            if (!resolved) {
-              return null;
-            }
-
-            return {
-              ...resolved,
-              label:
-                field.label ||
-                resolved.name
-            };
-          })
-          .filter(Boolean);
-
       if (
-        resolvedFields.length
+        saved &&
+        Array.isArray(saved.fields) &&
+        saved.fields.length
       ) {
 
-        return {
-          id: 'builtin-mark',
-          name: 'Merk',
-          builtin: true,
-          fields:
-            resolvedFields
-        };
+        const available =
+          getAvailableFields();
+
+        const validFields =
+          saved.fields
+            .map(savedField => {
+
+              const match =
+                available.find(field =>
+
+                  field.set ===
+                    savedField.set
+
+                  &&
+
+                  field.name ===
+                    savedField.name
+                );
+
+              if (!match) {
+                return null;
+              }
+
+              return {
+                ...match,
+                label:
+                  savedField.label ||
+                  match.name
+              };
+            })
+            .filter(Boolean);
+
+        if (validFields.length) {
+
+          return {
+            id: 'builtin-mark',
+            name: 'Merk',
+            builtin: true,
+            fields: validFields
+          };
+        }
       }
-    }
+
+    } catch {}
+
 
     /*
-     * Geen aangepaste preset:
-     * automatisch Cast Unit Mark zoeken.
-     */
+       Geen geldige opgeslagen preset.
+
+       Zoek echte Cast Unit Mark.
+    */
 
     const castUnitMark =
-      findRealCastUnitMarkField();
+      findCastUnitMarkField();
 
     return {
       id: 'builtin-mark',
@@ -431,19 +492,17 @@
     };
   }
 
-  function saveDefaultPreset(
-    preset
-  ) {
+  function saveDefaultPreset(preset) {
 
     localStorage.setItem(
-      DEFAULT_OVERRIDE_KEY,
+      DEFAULT_KEY,
 
       JSON.stringify({
-        name: 'Merk',
         fields: preset.fields
       })
     );
   }
+
 
   function allPresets() {
 
@@ -453,14 +512,18 @@
     ];
   }
 
+
   function selectedPreset() {
 
+    const id =
+      $('presetSelect').value;
+
     return (
-      allPresets().find(
-        preset =>
-          preset.id ===
-          $('presetSelect').value
-      )
+      allPresets()
+        .find(
+          preset =>
+            preset.id === id
+        )
 
       ||
 
@@ -468,9 +531,12 @@
     );
   }
 
-  function renderPresets(
-    preferId
-  ) {
+
+  /* =========================================================
+     PRESETS WEERGEVEN
+     ========================================================= */
+
+  function renderPresets(preferId) {
 
     const select =
       $('presetSelect');
@@ -484,25 +550,30 @@
       'builtin-mark';
 
     select.innerHTML =
-      presets
-        .map(
-          preset =>
-            `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)}</option>`
-        )
-        .join('');
+      presets.map(
+        preset =>
+          `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)}</option>`
+      ).join('');
 
-    select.value =
+    if (
       presets.some(
         preset =>
           preset.id === current
       )
+    ) {
 
-        ? current
+      select.value =
+        current;
 
-        : 'builtin-mark';
+    } else {
+
+      select.value =
+        'builtin-mark';
+    }
 
     renderPresetFields();
   }
+
 
   function renderPresetFields() {
 
@@ -516,123 +587,124 @@
       $('presetFields').innerHTML =
         `
         <span class="field-chip">
-
-          <b>
-            Geen Cast Unit Mark gevonden
-          </b>
-
+          <b>Geen parameter ingesteld</b>
           <small>
-            Kies via Preset aanpassen
-            een parameter uit de huidige selectie.
+            Selecteer een object en kies
+            "Preset aanpassen".
           </small>
-
         </span>
         `;
 
     } else {
 
       $('presetFields').innerHTML =
-        preset.fields
-          .map(field => {
-
-            const setName =
-              field.set ||
-              'Algemeen';
+        preset.fields.map(
+          field => {
 
             return `
-              <span class="field-chip">
+            <span class="field-chip">
 
-                <b>
-                  ${escapeHtml(
-                    field.label ||
-                    field.name
-                  )}
-                </b>
+              <b>
+                ${escapeHtml(
+                  field.label ||
+                  field.name
+                )}
+              </b>
 
-                <small>
-                  ${escapeHtml(setName)}
-                  →
-                  ${escapeHtml(field.name)}
-                </small>
+              <small>
+                ${escapeHtml(
+                  field.set ||
+                  'Zonder propertyset'
+                )}
+                →
+                ${escapeHtml(
+                  field.name
+                )}
+              </small>
 
-              </span>
+            </span>
             `;
-          })
-          .join('');
+          }
+        ).join('');
     }
 
     $('editPreset').disabled =
       false;
 
-    $('deletePreset').style.visibility =
-      preset.builtin
-        ? 'hidden'
-        : 'visible';
+    $('deletePreset')
+      .style.visibility =
+
+        preset.builtin
+          ? 'hidden'
+          : 'visible';
   }
 
-  /*
-   * ============================================================
-   * TRIMBLE CONNECT
-   * ============================================================
-   */
+
+  /* =========================================================
+     VERBINDEN
+     ========================================================= */
 
   async function connect() {
 
     try {
 
       if (
-        !window.TrimbleConnectWorkspace ||
+        !window.TrimbleConnectWorkspace
+        ||
         window.parent === window
       ) {
 
         throw new Error(
-          'preview'
+          'Niet in Trimble Connect'
         );
       }
 
       API =
-        await TrimbleConnectWorkspace.connect(
+        await TrimbleConnectWorkspace
+          .connect(
 
-          window.parent,
+            window.parent,
 
-          onWorkspaceEvent,
+            onWorkspaceEvent,
 
-          30000
-        );
-
-      $('connectionBadge').textContent =
-        'Trimble Connect';
+            30000
+          );
 
       $('connectionBadge')
-        .classList.add('ok');
+        .textContent =
+          'Trimble Connect';
+
+      $('connectionBadge')
+        .classList
+        .add('ok');
 
       await refreshSelection();
 
     } catch (error) {
 
+      console.error(
+        'Trimble verbinding:',
+        error
+      );
+
       API = null;
 
-      $('connectionBadge').textContent =
-        'Preview';
+      $('connectionBadge')
+        .textContent =
+          'Preview';
 
       $('connectionBadge')
-        .classList.add('demo');
-
-      selectionRows = [];
-
-      calculateSelectionInfo();
-
-      renderPresets();
+        .classList
+        .add('demo');
 
       setStatus(
-        'Open de extensie in Trimble Connect om objectgegevens te lezen.'
+        'Open de extensie in Trimble Connect.'
       );
     }
   }
 
-  function onWorkspaceEvent(
-    event
-  ) {
+
+  function onWorkspaceEvent(event) {
 
     if (
       event ===
@@ -643,11 +715,10 @@
     }
   }
 
-  /*
-   * ============================================================
-   * SELECTIE UITLEZEN
-   * ============================================================
-   */
+
+  /* =========================================================
+     SELECTIE UITLEZEN
+     ========================================================= */
 
   async function refreshSelection() {
 
@@ -656,20 +727,20 @@
     }
 
     setStatus(
-      'Selectie en parameters inlezen...'
+      'Parameters uit Trimble Connect lezen...'
     );
 
     try {
 
       const rows = [];
-
-      const seen =
-        new Set();
+      const seen = new Set();
 
       /*
-       * ROUTE 1
+       * =============================================
+       * STAP 1
        *
-       * geselecteerde objecten ophalen.
+       * Geselecteerde runtime IDs ophalen.
+       * =============================================
        */
 
       let selectedGroups = [];
@@ -677,17 +748,35 @@
       try {
 
         selectedGroups =
-          await API.viewer.getObjects({
-            selected: true
-          }) || [];
+          await API.viewer
+            .getObjects({
+              selected: true
+            })
+
+          || [];
 
       } catch (error) {
 
         console.warn(
-          'getObjects selected mislukt',
+          'getObjects selected:',
           error
         );
       }
+
+
+      /*
+       * =============================================
+       * STAP 2
+       *
+       * PER MODEL:
+       *
+       * getObjectProperties()
+       *
+       * gebruiken.
+       *
+       * Dit is de bron voor de parameters.
+       * =============================================
+       */
 
       for (
         const group
@@ -697,115 +786,108 @@
         const modelId =
           group?.modelId;
 
-        const objects =
+        if (!modelId) {
+          continue;
+        }
+
+        const selectedObjects =
           Array.isArray(
-            group?.objects
+            group.objects
           )
 
             ? group.objects
 
             : [];
 
-        if (
-          !modelId ||
-          !objects.length
-        ) {
-
-          continue;
-        }
-
-        const ids =
-          objects
-            .map(
-              object =>
-                Number(
-                  object?.id
-                )
+        const runtimeIds =
+          selectedObjects
+            .map(object =>
+              Number(object?.id)
             )
             .filter(
               Number.isFinite
             );
 
-        if (!ids.length) {
+        if (
+          !runtimeIds.length
+        ) {
+
           continue;
         }
 
-        /*
-         * Expliciet volledige properties ophalen.
-         */
-
-        let fullObjects = [];
+        let objectProperties = [];
 
         try {
 
-          fullObjects =
+          objectProperties =
             await API.viewer
               .getObjectProperties(
                 modelId,
-                ids
+                runtimeIds
               )
 
             || [];
 
         } catch (error) {
 
-          console.warn(
-            'getObjectProperties mislukt',
+          console.error(
+            'getObjectProperties fout:',
             modelId,
-            ids,
+            runtimeIds,
             error
           );
 
-          /*
-           * Fallback naar objecten
-           * uit getObjects.
-           */
-
-          fullObjects =
-            objects;
+          continue;
         }
+
 
         for (
           const object
-          of fullObjects
+          of objectProperties
         ) {
 
-          const id =
+          const runtimeId =
             Number(
               object?.id
             );
 
           if (
-            !Number.isFinite(id)
+            !Number.isFinite(
+              runtimeId
+            )
           ) {
 
             continue;
           }
 
-          const key =
-            `${modelId}:${id}`;
+          const uniqueKey =
+            `${modelId}:${runtimeId}`;
 
           if (
-            seen.has(key)
+            seen.has(uniqueKey)
           ) {
 
             continue;
           }
 
-          seen.add(key);
+          seen.add(uniqueKey);
 
           rows.push({
             modelId,
-            id,
+            id: runtimeId,
             object
           });
         }
       }
 
+
       /*
-       * ROUTE 2
+       * =============================================
+       * FALLBACK
        *
-       * fallback via getSelection().
+       * Indien getObjects niets geeft:
+       * getSelection gebruiken.
+       * =============================================
        */
 
       if (!rows.length) {
@@ -822,11 +904,12 @@
 
         } catch (error) {
 
-          console.warn(
-            'getSelection mislukt',
+          console.error(
+            'getSelection fout:',
             error
           );
         }
+
 
         for (
           const group
@@ -836,361 +919,355 @@
           const modelId =
             group?.modelId;
 
-          const ids =
-            (
-              group
-                ?.objectRuntimeIds
-              || []
+          if (!modelId) {
+            continue;
+          }
+
+          const runtimeIds =
+            Array.isArray(
+              group?.objectRuntimeIds
             )
 
-              .map(Number)
+              ? group
+                  .objectRuntimeIds
+                  .map(Number)
+                  .filter(
+                    Number.isFinite
+                  )
 
-              .filter(
-                Number.isFinite
-              );
+              : [];
 
           if (
-            !modelId ||
-            !ids.length
+            !runtimeIds.length
           ) {
 
             continue;
           }
 
-          const fullObjects =
-            await API.viewer
-              .getObjectProperties(
-                modelId,
-                ids
-              )
 
-            || [];
+          let objectProperties = [];
+
+          try {
+
+            objectProperties =
+              await API.viewer
+                .getObjectProperties(
+                  modelId,
+                  runtimeIds
+                )
+
+              || [];
+
+          } catch (error) {
+
+            console.error(
+              'Fallback getObjectProperties fout:',
+              error
+            );
+
+            continue;
+          }
+
 
           for (
             const object
-            of fullObjects
+            of objectProperties
           ) {
 
-            const id =
+            const runtimeId =
               Number(
                 object?.id
               );
 
             if (
-              !Number.isFinite(id)
+              !Number.isFinite(
+                runtimeId
+              )
             ) {
 
               continue;
             }
 
-            const key =
-              `${modelId}:${id}`;
+            const uniqueKey =
+              `${modelId}:${runtimeId}`;
 
             if (
-              seen.has(key)
+              seen.has(
+                uniqueKey
+              )
             ) {
 
               continue;
             }
 
-            seen.add(key);
+            seen.add(
+              uniqueKey
+            );
 
             rows.push({
               modelId,
-              id,
+              id: runtimeId,
               object
             });
           }
         }
       }
 
+
       /*
-       * Selectie opslaan.
+       * =============================================
+       * RESULTAAT
+       * =============================================
        */
 
       selectionRows =
         rows;
 
-      calculateSelectionInfo();
 
-      /*
-       * Preset opnieuw koppelen
-       * aan werkelijk gevonden parameters.
-       */
+      const fields =
+        getAvailableFields();
 
-      renderPresets(
-        $('presetSelect')?.value
-      );
 
-      const parameterCount =
-        getAvailableFields().length;
+      $('selectedCount')
+        .textContent =
+          rows.length;
 
-      const withProperties =
-        rows.filter(
-          row =>
-            flattenProperties(
-              row.object
-            ).length > 0
-        ).length;
 
-      /*
-       * Diagnose in console.
-       */
+      $('markCount')
+        .textContent =
+          fields.length;
 
-      console.log(
-        'ALTEZ OBJECTINFO',
-        {
-          rows,
-          parameterCount,
-          properties:
-            rows.map(row => ({
-              modelId:
-                row.modelId,
-
-              id:
-                row.id,
-
-              properties:
-                flattenProperties(
-                  row.object
-                )
-            }))
-        }
-      );
 
       if (!rows.length) {
 
-        setStatus(
-          'Geen geselecteerde 3D-objecten gevonden.'
+        $('selectionHint')
+          .textContent =
+            'Selecteer één of meer elementen in de 3D Viewer.';
+
+        renderPresets(
+          $('presetSelect').value
         );
 
+        setStatus(
+          'Geen geselecteerde objecten gevonden.'
+        );
+
+        return;
       }
 
-      else if (
-        !withProperties
+
+      $('selectionHint')
+        .textContent =
+
+          `${fields.length} echte parameters uit Trimble gelezen.`;
+
+
+      /*
+       * =============================================
+       * DEBUG
+       *
+       * Dit toont EXACT wat Trimble
+       * aan de extensie terugstuurt.
+       * =============================================
+       */
+
+      console.group(
+        'ALTEZ OBJECTINFO - TRIMBLE PARAMETERS'
+      );
+
+
+      for (
+        const row
+        of rows
       ) {
 
-        setStatus(
-          `${rows.length} element(en) gevonden, maar geen parameters ontvangen.`
+        console.log(
+          'OBJECT',
+          {
+            modelId:
+              row.modelId,
+
+            runtimeId:
+              row.id,
+
+            rawObject:
+              row.object
+          }
         );
 
-      }
 
-      else {
+        console.table(
 
-        setStatus(
-          `${rows.length} element(en) ingelezen - ${parameterCount} parameters gevonden.`
+          flattenProperties(
+            row.object
+          ).map(
+            property => ({
+
+              PropertySet:
+                property.set,
+
+              Property:
+                property.name,
+
+              Type:
+                property.type,
+
+              Value:
+                safeValue(
+                  property.value
+                )
+            })
+          )
         );
       }
+
+
+      console.log(
+        'UNIEKE PARAMETERS',
+        fields
+      );
+
+
+      console.groupEnd();
+
+
+      /*
+       * Presets opnieuw renderen
+       * NA parameteruitlezing.
+       */
+
+      renderPresets(
+        $('presetSelect').value
+      );
+
+
+      setStatus(
+        `${rows.length} object(en) - ${fields.length} echte parameters ingelezen.`
+      );
+
 
     } catch (error) {
 
       console.error(
-        'Selectie inlezen mislukt',
+        'ALTEZ Objectinfo fout:',
         error
       );
 
       selectionRows = [];
 
-      calculateSelectionInfo();
+      $('selectedCount')
+        .textContent =
+          '0';
+
+      $('markCount')
+        .textContent =
+          '0';
+
+      $('selectionHint')
+        .textContent =
+          'Selecteer één of meer elementen in de 3D Viewer.';
 
       renderPresets();
 
       setStatus(
-        `Selectie kon niet worden ingelezen: ${error?.message || error}`
+        `Parameters uitlezen mislukt: ${error?.message || error}`
       );
     }
   }
 
-  function calculateSelectionInfo() {
 
-    const fields =
-      getAvailableFields();
+  /* =========================================================
+     PRESET EDITOR
+     ========================================================= */
 
-    $('selectedCount').textContent =
-      selectionRows.length;
-
-    $('markCount').textContent =
-      fields.length;
-
-    $('selectionHint').textContent =
-      selectionRows.length
-
-        ? `${fields.length} parameters rechtstreeks uit de geselecteerde elementen gelezen.`
-
-        : 'Selecteer één of meer elementen in de 3D Viewer.';
-  }
-
-  /*
-   * ============================================================
-   * WAARDE VAN GEKOZEN PARAMETER
-   * ============================================================
-   */
-
-  function fieldValue(
-    object,
-    field
-  ) {
-
-    const properties =
-      flattenProperties(
-        object
-      );
-
-    const resolved =
-      resolveField(field)
-      || field;
-
-    /*
-     * Exact propertyset + propertynaam.
-     */
-
-    let match =
-      properties.find(
-        property =>
-
-          normalize(property.set) ===
-            normalize(resolved.set)
-
-          &&
-
-          normalize(property.name) ===
-            normalize(resolved.name)
-      );
-
-    /*
-     * Exact dezelfde propertynaam.
-     */
-
-    if (!match) {
-
-      match =
-        properties.find(
-          property =>
-
-            normalize(
-              property.name
-            )
-
-            ===
-
-            normalize(
-              resolved.name
-            )
-        );
-    }
-
-    /*
-     * Cast Unit Mark fallback.
-     */
-
-    if (
-      !match &&
-      compactName(
-        resolved.name
-      ).includes(
-        'castunitmark'
-      )
-    ) {
-
-      match =
-        properties.find(
-          property =>
-
-            compactName(
-              property.name
-            )
-              .endsWith(
-                'castunitmark'
-              )
-        );
-    }
-
-    return match
-      ? match.value
-      : '';
-  }
-
-  /*
-   * ============================================================
-   * PRESET EDITOR
-   * ============================================================
-   */
-
-  function openPresetDialog(
-    preset
-  ) {
+  function openPresetDialog(preset) {
 
     editingPresetId =
       preset?.id || null;
 
-    $('dialogTitle').textContent =
-      preset
 
-        ? `Preset ${preset.name} aanpassen`
+    $('dialogTitle')
+      .textContent =
 
-        : 'Nieuwe preset';
+        preset
 
-    $('presetName').value =
-      preset?.name || '';
+          ? `Preset ${preset.name} aanpassen`
 
-    $('presetName').disabled =
-      !!preset?.builtin;
+          : 'Nieuwe preset';
+
+
+    $('presetName')
+      .value =
+        preset?.name || '';
+
+
+    $('presetName')
+      .disabled =
+        !!preset?.builtin;
+
 
     dialogFields =
       clone(
         preset?.fields || []
       );
 
+
     /*
-     * Als Merk leeg is:
-     * echte Cast Unit Mark kiezen.
-     */
+       Lege preset?
+
+       Dan eerst Cast Unit Mark,
+       anders eerste echte parameter.
+    */
 
     if (
       !dialogFields.length
     ) {
 
-      const castUnitMark =
-        findRealCastUnitMarkField();
+      const mark =
+        findCastUnitMarkField();
 
-      const firstField =
-        castUnitMark ||
+      const first =
+        mark ||
         getAvailableFields()[0];
 
-      if (firstField) {
+
+      if (first) {
 
         dialogFields = [
           {
-            ...firstField,
+            ...first,
 
             label:
-              castUnitMark
+              mark
                 ? 'Merk'
-                : firstField.name
+                : first.name
           }
         ];
       }
     }
 
+
     renderDialogFields();
+
 
     $('presetDialog')
       .showModal();
   }
+
 
   function renderDialogFields() {
 
     const available =
       getAvailableFields();
 
+
     const options =
-      available
-        .map(field => {
+      available.map(
+        field => {
 
           const setName =
             field.set ||
-            'Algemeen';
+            'Zonder propertyset';
 
           return `
             <option value="${escapeHtml(fieldKey(field))}">
@@ -1199,122 +1276,116 @@
               ${escapeHtml(field.name)}
             </option>
           `;
-        })
-        .join('');
+        }
+      ).join('');
 
-    $('selectedFields').innerHTML =
-      dialogFields
-        .map(
+
+    $('selectedFields')
+      .innerHTML =
+
+        dialogFields.map(
           (field, index) => {
 
             return `
-              <div
-                class="preset-field-row"
-                data-index="${index}"
-              >
+            <div
+              class="preset-field-row"
+              data-index="${index}"
+            >
 
-                <div class="field-row-top">
+              <div class="field-row-top">
 
-                  <span class="order-number">
-                    ${index + 1}
-                  </span>
+                <span class="order-number">
+                  ${index + 1}
+                </span>
 
-                  <select
-                    class="parameter-select"
-                    data-action="parameter"
-                  >
-                    ${options}
-                  </select>
+                <select
+                  class="parameter-select"
+                  data-action="parameter"
+                >
+                  ${options}
+                </select>
 
-                  <button
-                    type="button"
-                    class="mini-btn"
-                    data-action="up"
-                  >
-                    ↑
-                  </button>
+                <button
+                  type="button"
+                  class="mini-btn"
+                  data-action="up"
+                >
+                  ↑
+                </button>
 
-                  <button
-                    type="button"
-                    class="mini-btn"
-                    data-action="down"
-                  >
-                    ↓
-                  </button>
+                <button
+                  type="button"
+                  class="mini-btn"
+                  data-action="down"
+                >
+                  ↓
+                </button>
 
-                  <button
-                    type="button"
-                    class="mini-btn remove"
-                    data-action="remove"
-                  >
-                    ×
-                  </button>
-
-                </div>
-
-                <label class="alias-row">
-
-                  <span>
-                    Naam in label
-                  </span>
-
-                  <input
-                    data-action="label"
-                    value="${escapeHtml(field.label || field.name)}"
-                    maxlength="40"
-                  >
-
-                </label>
+                <button
+                  type="button"
+                  class="mini-btn remove"
+                  data-action="remove"
+                >
+                  ×
+                </button>
 
               </div>
+
+
+              <label class="alias-row">
+
+                <span>
+                  Naam in label
+                </span>
+
+                <input
+                  data-action="label"
+                  value="${escapeHtml(field.label || field.name)}"
+                  maxlength="40"
+                >
+
+              </label>
+
+            </div>
             `;
           }
-        )
-        .join('');
+        ).join('');
 
-    /*
-     * Correcte dropdownwaarden selecteren.
-     */
 
-    [
-      ...$('selectedFields')
+    const rows =
+      $('selectedFields')
         .querySelectorAll(
           '.preset-field-row'
-        )
-    ]
-      .forEach(
-        (row, index) => {
+        );
 
-          const resolved =
-            resolveField(
-              dialogFields[index]
-            )
 
-            ||
+    rows.forEach(
+      (row, index) => {
 
-            dialogFields[index];
+        const select =
+          row.querySelector(
+            '.parameter-select'
+          );
 
-          const select =
-            row.querySelector(
-              '.parameter-select'
-            );
+        const key =
+          fieldKey(
+            dialogFields[index]
+          );
 
-          const exists =
-            getAvailableFields()
-              .some(
-                field =>
-                  fieldKey(field)
-                  ===
-                  fieldKey(resolved)
-              );
 
-          if (exists) {
+        if (
+          available.some(
+            field =>
+              fieldKey(field) === key
+          )
+        ) {
 
-            select.value =
-              fieldKey(resolved);
-          }
+          select.value =
+            key;
         }
-      );
+      }
+    );
+
 
     $('dialogEmptyHint')
       .style.display =
@@ -1324,21 +1395,21 @@
           : 'block';
   }
 
+
   function addDialogField() {
 
     const available =
       getAvailableFields();
 
+
     const used =
       new Set(
         dialogFields.map(
           field =>
-            fieldKey(
-              resolveField(field)
-              || field
-            )
+            fieldKey(field)
         )
       );
+
 
     const next =
       available.find(
@@ -1346,28 +1417,28 @@
           !used.has(
             fieldKey(field)
           )
-      )
+      );
 
-      ||
-
-      available[0];
 
     if (!next) {
 
       setStatus(
-        'Geen parameters beschikbaar in de huidige selectie.'
+        'Geen extra parameter beschikbaar.'
       );
 
       return;
     }
+
 
     dialogFields.push({
       ...next,
       label: next.name
     });
 
+
     renderDialogFields();
   }
+
 
   function handleDialogFieldAction(
     event
@@ -1378,21 +1449,21 @@
         '.preset-field-row'
       );
 
+
     if (!row) {
       return;
     }
+
 
     const index =
       Number(
         row.dataset.index
       );
 
+
     const action =
       event.target.dataset.action;
 
-    /*
-     * Andere parameter kiezen.
-     */
 
     if (
       action ===
@@ -1408,40 +1479,30 @@
               event.target.value
           );
 
+
       if (selected) {
 
         dialogFields[index] = {
           ...selected,
-
           label:
-            dialogFields[index]
-              ?.label
-
-            ||
-
             selected.name
         };
       }
     }
 
-    /*
-     * Naam aanpassen.
-     */
 
-    if (
+    else if (
       action ===
       'label'
     ) {
 
-      dialogFields[index].label =
-        event.target.value;
+      dialogFields[index]
+        .label =
+          event.target.value;
     }
 
-    /*
-     * Verwijderen.
-     */
 
-    if (
+    else if (
       action ===
       'remove'
     ) {
@@ -1454,36 +1515,29 @@
       renderDialogFields();
     }
 
-    /*
-     * Omhoog.
-     */
 
-    if (
-      action === 'up' &&
+    else if (
+      action === 'up'
+      &&
       index > 0
     ) {
 
       [
         dialogFields[index - 1],
         dialogFields[index]
-      ]
-
-      =
-
-      [
+      ] = [
         dialogFields[index],
         dialogFields[index - 1]
       ];
 
+
       renderDialogFields();
     }
 
-    /*
-     * Omlaag.
-     */
 
-    if (
-      action === 'down' &&
+    else if (
+      action === 'down'
+      &&
       index <
         dialogFields.length - 1
     ) {
@@ -1491,18 +1545,16 @@
       [
         dialogFields[index + 1],
         dialogFields[index]
-      ]
-
-      =
-
-      [
+      ] = [
         dialogFields[index],
         dialogFields[index + 1]
       ];
 
+
       renderDialogFields();
     }
   }
+
 
   function savePresetFromDialog(
     event
@@ -1510,9 +1562,23 @@
 
     event.preventDefault();
 
+
+    if (
+      !dialogFields.length
+    ) {
+
+      setStatus(
+        'Voeg minstens één parameter toe.'
+      );
+
+      return;
+    }
+
+
     const isBuiltin =
       editingPresetId ===
       'builtin-mark';
+
 
     const name =
       isBuiltin
@@ -1523,75 +1589,60 @@
             .value
             .trim();
 
+
     if (!name) {
       return;
     }
 
-    if (
-      !dialogFields.length
-    ) {
 
-      setStatus(
-        'Voeg minstens één parameter toe aan de preset.'
-      );
-
-      return;
-    }
-
-    dialogFields =
+    const cleanFields =
       dialogFields.map(
         field => ({
-          ...field,
+          set: field.set,
+          name: field.name,
 
           label:
-            (
+            String(
               field.label ||
               field.name
-            )
-              .trim()
-
-            ||
-
-            field.name
+            ).trim()
         })
       );
 
-    /*
-     * Standaardpreset Merk opslaan.
-     */
 
     if (isBuiltin) {
 
       saveDefaultPreset({
-        id: 'builtin-mark',
-        name: 'Merk',
-        builtin: true,
-        fields: dialogFields
+        fields:
+          cleanFields
       });
+
 
       $('presetDialog')
         .close();
+
 
       renderPresets(
         'builtin-mark'
       );
 
+
       setStatus(
-        'Preset Merk aangepast.'
+        'Preset Merk opgeslagen.'
       );
+
 
       return;
     }
 
-    /*
-     * Eigen preset.
-     */
 
     const presets =
       getCustomPresets();
 
+
     let id =
       editingPresetId;
+
 
     if (id) {
 
@@ -1601,15 +1652,14 @@
             preset.id === id
         );
 
-      if (
-        index >= 0
-      ) {
+
+      if (index >= 0) {
 
         presets[index] = {
           ...presets[index],
           name,
           fields:
-            dialogFields
+            cleanFields
         };
       }
 
@@ -1618,50 +1668,63 @@
       id =
         `preset-${Date.now()}`;
 
+
       presets.push({
         id,
         name,
         fields:
-          dialogFields
+          cleanFields
       });
     }
+
 
     saveCustomPresets(
       presets
     );
 
+
     $('presetDialog')
       .close();
 
+
     renderPresets(id);
+
 
     setStatus(
       `Preset ${name} opgeslagen.`
     );
   }
 
-  /*
-   * ============================================================
-   * KLEUREN
-   * ============================================================
-   */
+
+  /* =========================================================
+     KLEUREN
+     ========================================================= */
 
   function renderColorPalette() {
 
-    $('colorPalette').innerHTML =
-      TRIMBLE_COLORS
-        .map(
-          hex => `
-            <button
-              type="button"
-              class="color-swatch${hex.toLowerCase() === selectedColor.toLowerCase() ? ' selected' : ''}"
-              data-color="${hex}"
-              title="${hex}"
-              style="--swatch:${hex}"
-            ></button>
-          `
-        )
-        .join('');
+    $('colorPalette')
+      .innerHTML =
+
+        TRIMBLE_COLORS.map(
+          color => {
+
+            const selected =
+              color.toLowerCase()
+              ===
+              selectedColor.toLowerCase();
+
+            return `
+              <button
+                type="button"
+                class="color-swatch${selected ? ' selected' : ''}"
+                data-color="${color}"
+                style="--swatch:${color}"
+                title="${color}"
+              ></button>
+            `;
+          }
+        ).join('');
+
 
     $('currentColor')
       .style
@@ -1671,115 +1734,119 @@
       );
   }
 
-  function chooseColor(
-    hex
-  ) {
+
+  function chooseColor(color) {
 
     selectedColor =
-      hex;
+      color;
+
 
     localStorage.setItem(
       COLOR_KEY,
-      selectedColor
+      color
     );
+
 
     renderColorPalette();
   }
 
-  function colorToRGBA(
-    hex
-  ) {
 
-    const value =
+  function colorToRGBA(hex) {
+
+    const number =
       parseInt(
-        hex.slice(1),
+        hex.substring(1),
         16
       );
 
+
     return {
+
       r:
-        (value >> 16)
+        (number >> 16)
         & 255,
 
       g:
-        (value >> 8)
+        (number >> 8)
         & 255,
 
       b:
-        value
+        number
         & 255,
 
-      a: 255
+      a:
+        255
     };
   }
 
-  /*
-   * ============================================================
-   * LABELPOSITIE
-   * ============================================================
-   */
+
+  /* =========================================================
+     BOUNDING BOX
+     ========================================================= */
 
   function bboxCenter(
     box,
     fallback
   ) {
 
-    const boundingBox =
+    const bb =
       box?.boundingBox;
 
-    const min =
-      boundingBox?.min;
-
-    const max =
-      boundingBox?.max;
 
     if (
-      min &&
-      max
+      bb?.min &&
+      bb?.max
     ) {
 
       return {
 
         x:
           (
-            Number(min.x) +
-            Number(max.x)
-          )
-          / 2,
+            Number(bb.min.x)
+            +
+            Number(bb.max.x)
+          ) / 2,
 
         y:
           (
-            Number(min.y) +
-            Number(max.y)
-          )
-          / 2,
+            Number(bb.min.y)
+            +
+            Number(bb.max.y)
+          ) / 2,
 
         z:
           (
-            Number(min.z) +
-            Number(max.z)
-          )
-          / 2,
+            Number(bb.min.z)
+            +
+            Number(bb.max.z)
+          ) / 2,
+
 
         sizeX:
           Math.abs(
-            Number(max.x) -
-            Number(min.x)
+            Number(bb.max.x)
+            -
+            Number(bb.min.x)
           ),
+
 
         sizeY:
           Math.abs(
-            Number(max.y) -
-            Number(min.y)
+            Number(bb.max.y)
+            -
+            Number(bb.min.y)
           ),
+
 
         sizeZ:
           Math.abs(
-            Number(max.z) -
-            Number(min.z)
+            Number(bb.max.z)
+            -
+            Number(bb.min.z)
           )
       };
     }
+
 
     if (fallback) {
 
@@ -1803,32 +1870,37 @@
       };
     }
 
+
     return null;
   }
 
-  function labelOffset(
+
+  function labelPosition(
     center,
     index
   ) {
 
-    const objectSize =
+    const size =
       Math.max(
-        center.sizeX || 0,
-        center.sizeY || 0,
-        center.sizeZ || 0,
+        center.sizeX,
+        center.sizeY,
+        center.sizeZ,
         1
       );
+
 
     const distance =
       Math.max(
         1,
-        objectSize * 0.75
+        size * 0.75
       );
+
 
     const angle =
       (index % 8)
       *
-      (Math.PI / 4);
+      Math.PI / 4;
+
 
     return {
 
@@ -1839,6 +1911,7 @@
         *
         distance,
 
+
       y:
         center.y
         +
@@ -1846,433 +1919,361 @@
         *
         distance,
 
+
       z:
         center.z
         +
         Math.max(
           0.6,
-          (center.sizeZ || 1)
-          * 0.45
+          center.sizeZ
+          *
+          0.4
         )
     };
   }
 
-  /*
-   * ============================================================
-   * LABELS PLAATSEN
-   * ============================================================
-   */
+
+  /* =========================================================
+     LABELS
+     ========================================================= */
 
   async function placeLabels() {
 
     if (!API) {
 
       setStatus(
-        'Open de extensie in Trimble Connect.'
+        'Geen verbinding met Trimble Connect.'
       );
 
       return;
     }
+
 
     if (
       !selectionRows.length
     ) {
 
       setStatus(
-        'Selecteer eerst één of meer elementen in de 3D Viewer.'
+        'Selecteer eerst objecten.'
       );
 
       return;
     }
+
 
     const preset =
       selectedPreset();
 
+
     if (
-      !preset.fields?.length
+      !preset.fields.length
     ) {
 
       setStatus(
-        'De gekozen preset bevat geen parameters.'
+        'De preset bevat geen parameters.'
       );
 
       return;
     }
 
-    const hideEmpty =
-      $('hideEmpty').checked;
+
+    await clearLabels(false);
+
 
     const color =
       colorToRGBA(
         selectedColor
       );
 
-    try {
 
-      await clearLabels(
-        false
-      );
+    const hideEmpty =
+      $('hideEmpty').checked;
 
-      const markups = [];
 
-      /*
-       * ZEER BELANGRIJK:
-       *
-       * GEEN GROEPERING OP MERK.
-       *
-       * Iedere geselecteerde runtime-ID
-       * krijgt zijn eigen label.
-       *
-       * Dus:
-       *
-       * Assembly 1 = K12
-       * Assembly 2 = K12
-       *
-       * geeft TWEE labels.
-       */
+    const markups = [];
+
+
+    /*
+       Iedere runtime-ID afzonderlijk.
+
+       GEEN groepering op merk.
+    */
+
+    for (
+      let index = 0;
+      index <
+        selectionRows.length;
+      index++
+    ) {
+
+      const row =
+        selectionRows[index];
+
+
+      const lines = [];
+
 
       for (
-        let index = 0;
-        index <
-          selectionRows.length;
-        index++
+        const field
+        of preset.fields
       ) {
 
-        const row =
-          selectionRows[index];
+        const value =
+          fieldValue(
+            row.object,
+            field
+          );
 
-        const lines = [];
 
-        /*
-         * Alle parameters uit preset.
-         */
+        const hasValue =
+          value.trim() !== '';
 
-        for (
-          const field
-          of preset.fields
-        ) {
-
-          const value =
-            fieldValue(
-              row.object,
-              field
-            );
-
-          const hasValue =
-            String(
-              value ?? ''
-            )
-              .trim()
-              !== '';
-
-          if (
-            hideEmpty &&
-            !hasValue
-          ) {
-
-            continue;
-          }
-
-          /*
-           * Eén parameter:
-           * alleen waarde.
-           */
-
-          if (
-            preset.fields.length
-            === 1
-          ) {
-
-            lines.push(
-              hasValue
-                ? String(value)
-                : '-'
-            );
-
-          }
-
-          /*
-           * Meerdere parameters:
-           *
-           * Merk: K12
-           * Profiel: HEA300
-           * Gewicht: 842
-           */
-
-          else {
-
-            lines.push(
-              `${field.label || field.name}: ${hasValue ? value : '-'}`
-            );
-          }
-        }
 
         if (
-          !lines.length
+          hideEmpty &&
+          !hasValue
         ) {
 
           continue;
         }
 
-        /*
-         * Bounding box object.
-         */
 
-        let box = null;
+        if (
+          preset.fields.length === 1
+        ) {
 
-        try {
+          lines.push(
+            hasValue
+              ? value
+              : '-'
+          );
 
-          const boxes =
-            await API.viewer
-              .getObjectBoundingBoxes(
-                row.modelId,
-                [row.id]
-              );
+        } else {
 
-          box =
-            (boxes || [])
-              .find(
-                item =>
-                  Number(item?.id)
-                  ===
-                  Number(row.id)
-              )
-
-            ||
-
-            boxes?.[0]
-
-            ||
-
-            null;
-
-        } catch (error) {
-
-          console.warn(
-            'Bounding box kon niet worden gelezen',
-            row.id,
-            error
+          lines.push(
+            `${field.label || field.name}: ${hasValue ? value : '-'}`
           );
         }
-
-        const center =
-          bboxCenter(
-            box,
-            row.object?.position
-          );
-
-        if (!center) {
-
-          console.warn(
-            'Geen positie voor label',
-            row
-          );
-
-          continue;
-        }
-
-        /*
-         * Label buiten object.
-         */
-
-        const end =
-          labelOffset(
-            center,
-            index
-          );
-
-        markups.push({
-
-          /*
-           * Leader line begint
-           * op geselecteerd object.
-           */
-
-          start: {
-
-            modelId:
-              row.modelId,
-
-            objectId:
-              row.id,
-
-            positionX:
-              center.x * 1000,
-
-            positionY:
-              center.y * 1000,
-
-            positionZ:
-              center.z * 1000,
-
-            type:
-              'point'
-          },
-
-          /*
-           * Labelpositie.
-           */
-
-          end: {
-
-            positionX:
-              end.x * 1000,
-
-            positionY:
-              end.y * 1000,
-
-            positionZ:
-              end.z * 1000,
-
-            type:
-              'point'
-          },
-
-          text:
-            lines.join('\n'),
-
-          color
-        });
       }
 
-      if (
-        !markups.length
-      ) {
 
-        setStatus(
-          'Geen labels geplaatst: de gekozen parameters bevatten geen waarden.'
-        );
-
-        return;
+      if (!lines.length) {
+        continue;
       }
 
-      /*
-       * Eerst alle labels tegelijk proberen.
-       */
+
+      let box = null;
+
 
       try {
 
-        const added =
-          await API.markup
-            .addTextMarkup(
-              markups
+        const boxes =
+          await API.viewer
+            .getObjectBoundingBoxes(
+              row.modelId,
+              [row.id]
             );
 
-        activeMarkupIds =
-          (added || [])
-            .map(
-              markup =>
-                markup?.id
+
+        box =
+          (boxes || [])
+            .find(
+              item =>
+                Number(item?.id)
+                ===
+                row.id
             )
-            .filter(
-              id =>
-                id !== undefined
-                &&
-                id !== null
-            );
 
-        setStatus(
-          `${markups.length} afzonderlijke label(s) geplaatst.`
-        );
+          ||
 
-      }
+          boxes?.[0]
 
-      /*
-       * Sommige Trimble hosts kunnen
-       * moeite hebben met meerdere markups
-       * tegelijk.
-       *
-       * Dan plaatsen we ze één voor één.
-       */
+          ||
 
-      catch (bulkError) {
+          null;
+
+
+      } catch (error) {
 
         console.warn(
-          'Bulk labels mislukt. Individueel proberen.',
-          bulkError
-        );
-
-        const ids = [];
-
-        let placed = 0;
-
-        for (
-          const markup
-          of markups
-        ) {
-
-          try {
-
-            const added =
-              await API.markup
-                .addTextMarkup(
-                  [markup]
-                );
-
-            for (
-              const item
-              of (added || [])
-            ) {
-
-              if (
-                item?.id !==
-                  undefined
-                &&
-                item?.id !==
-                  null
-              ) {
-
-                ids.push(
-                  item.id
-                );
-              }
-            }
-
-            placed++;
-
-          } catch (
-            singleError
-          ) {
-
-            console.error(
-              'Label plaatsen mislukt',
-              markup,
-              singleError
-            );
-          }
-        }
-
-        activeMarkupIds =
-          ids;
-
-        if (!placed) {
-
-          throw bulkError;
-        }
-
-        setStatus(
-          `${placed} afzonderlijke label(s) geplaatst.`
+          'Bounding box fout',
+          error
         );
       }
 
-    } catch (error) {
 
-      console.error(
-        'Labels plaatsen mislukt',
-        error
-      );
+      const center =
+        bboxCenter(
+          box,
+          row.object?.position
+        );
+
+
+      if (!center) {
+        continue;
+      }
+
+
+      const end =
+        labelPosition(
+          center,
+          index
+        );
+
+
+      markups.push({
+
+        start: {
+
+          modelId:
+            row.modelId,
+
+          objectId:
+            row.id,
+
+          positionX:
+            center.x * 1000,
+
+          positionY:
+            center.y * 1000,
+
+          positionZ:
+            center.z * 1000,
+
+          type:
+            'point'
+        },
+
+
+        end: {
+
+          positionX:
+            end.x * 1000,
+
+          positionY:
+            end.y * 1000,
+
+          positionZ:
+            end.z * 1000,
+
+          type:
+            'point'
+        },
+
+
+        text:
+          lines.join('\n'),
+
+
+        color
+      });
+    }
+
+
+    if (!markups.length) {
 
       setStatus(
-        `Labels plaatsen mislukt: ${error?.message || error}`
+        'Geen labels om te plaatsen.'
+      );
+
+      return;
+    }
+
+
+    try {
+
+      const added =
+        await API.markup
+          .addTextMarkup(
+            markups
+          );
+
+
+      activeMarkupIds =
+        (added || [])
+          .map(
+            markup =>
+              markup?.id
+          )
+          .filter(
+            id =>
+              id !== undefined
+              &&
+              id !== null
+          );
+
+
+      setStatus(
+        `${markups.length} afzonderlijke label(s) geplaatst.`
+      );
+
+
+    } catch (bulkError) {
+
+      /*
+         Fallback:
+         labels één voor één.
+      */
+
+      console.warn(
+        'Bulk markup mislukt',
+        bulkError
+      );
+
+
+      let placed = 0;
+
+
+      for (
+        const markup
+        of markups
+      ) {
+
+        try {
+
+          const added =
+            await API.markup
+              .addTextMarkup(
+                [markup]
+              );
+
+
+          for (
+            const result
+            of (added || [])
+          ) {
+
+            if (
+              result?.id !==
+                undefined
+            ) {
+
+              activeMarkupIds.push(
+                result.id
+              );
+            }
+          }
+
+
+          placed++;
+
+
+        } catch (error) {
+
+          console.error(
+            'Label mislukt',
+            error
+          );
+        }
+      }
+
+
+      setStatus(
+        `${placed} afzonderlijke label(s) geplaatst.`
       );
     }
   }
 
-  /*
-   * ============================================================
-   * LABELS VERWIJDEREN
-   * ============================================================
-   */
 
   async function clearLabels(
     updateStatus = true
@@ -2293,35 +2294,28 @@
       } catch (error) {
 
         console.warn(
-          'Labels verwijderen mislukt',
+          'Markups verwijderen:',
           error
         );
       }
     }
 
+
     activeMarkupIds = [];
+
 
     if (updateStatus) {
 
       setStatus(
-        'Alle door Altez Objectinfo geplaatste labels zijn verwijderd.'
+        'Labels verwijderd.'
       );
     }
   }
 
-  function setStatus(
-    text
-  ) {
 
-    $('status').textContent =
-      text;
-  }
-
-  /*
-   * ============================================================
-   * EVENTS
-   * ============================================================
-   */
+  /* =========================================================
+     EVENTS
+     ========================================================= */
 
   $('refreshSelection')
     .addEventListener(
@@ -2329,11 +2323,13 @@
       refreshSelection
     );
 
+
   $('presetSelect')
     .addEventListener(
       'change',
       renderPresetFields
     );
+
 
   $('newPreset')
     .addEventListener(
@@ -2341,6 +2337,7 @@
       () =>
         openPresetDialog(null)
     );
+
 
   $('editPreset')
     .addEventListener(
@@ -2351,6 +2348,7 @@
         )
     );
 
+
   $('deletePreset')
     .addEventListener(
       'click',
@@ -2359,6 +2357,7 @@
         const preset =
           selectedPreset();
 
+
         if (
           preset.builtin
         ) {
@@ -2366,14 +2365,20 @@
           return;
         }
 
-        saveCustomPresets(
+
+        const presets =
           getCustomPresets()
             .filter(
               item =>
                 item.id !==
                 preset.id
-            )
+            );
+
+
+        saveCustomPresets(
+          presets
         );
+
 
         renderPresets(
           'builtin-mark'
@@ -2381,17 +2386,20 @@
       }
     );
 
+
   $('addField')
     .addEventListener(
       'click',
       addDialogField
     );
 
+
   $('selectedFields')
     .addEventListener(
       'click',
       handleDialogFieldAction
     );
+
 
   $('selectedFields')
     .addEventListener(
@@ -2399,17 +2407,20 @@
       handleDialogFieldAction
     );
 
+
   $('selectedFields')
     .addEventListener(
       'input',
       handleDialogFieldAction
     );
 
+
   $('presetForm')
     .addEventListener(
       'submit',
       savePresetFromDialog
     );
+
 
   $('colorPalette')
     .addEventListener(
@@ -2421,6 +2432,7 @@
             '.color-swatch'
           );
 
+
         if (swatch) {
 
           chooseColor(
@@ -2430,11 +2442,13 @@
       }
     );
 
+
   $('placeLabels')
     .addEventListener(
       'click',
       placeLabels
     );
+
 
   $('clearLabels')
     .addEventListener(
@@ -2443,11 +2457,10 @@
         clearLabels(true)
     );
 
-  /*
-   * ============================================================
-   * START
-   * ============================================================
-   */
+
+  /* =========================================================
+     START
+     ========================================================= */
 
   renderPresets();
 
